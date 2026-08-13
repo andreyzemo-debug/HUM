@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>HUM — find your frequency</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%229%22 fill=%22%2312141b%22/><path d=%22M5 16c2-6 3 6 5 0s3-9 5 0 3 9 5 0 3-6 5 0%22 stroke=%22%237c9eff%22 stroke-width=%222.4%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- ============ AMBIENT BACKDROP ============ -->
+    <div class="hum-field" aria-hidden="true">
+      <svg
+        viewBox="0 0 1200 400"
+        preserveAspectRatio="none"
+        class="hum-wave hum-wave--1"
+      >
+        <path
+          d="M0 200 C 100 120, 200 280, 300 200 S 500 80, 600 200 S 800 320, 900 200 S 1100 120, 1200 200"
+        />
+      </svg>
+      <svg
+        viewBox="0 0 1200 400"
+        preserveAspectRatio="none"
+        class="hum-wave hum-wave--2"
+      >
+        <path
+          d="M0 200 C 120 260, 220 140, 340 200 S 540 300, 660 200 S 860 100, 980 200 S 1180 260, 1200 200"
+        />
+      </svg>
+    </div>
+
+    <!-- ============ TOASTS ============ -->
+    <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+    <!-- ============ LANGUAGE SELECTION (first launch) ============ -->
+    <main id="langScreen" class="lang-screen">
+      <div class="lang-screen__card">
+        <div class="brand-mark">
+          <svg viewBox="0 0 40 40" class="brand-mark__glyph">
+            <path
+              d="M4 20c2.5-9 4 9 6.5 0s4-13 6.5 0 4 13 6.5 0 4-9 6.5 0 4 9 6.5 0"
+            />
+          </svg>
+          <span class="brand-mark__word">HUM</span>
+        </div>
+        <h1 class="lang-screen__title" data-i18n="langScreen.title">
+          Choose your language
+        </h1>
+        <p class="lang-screen__subtitle" data-i18n="langScreen.subtitle">
+          You can change this anytime in Settings.
+        </p>
+        <div class="lang-choices">
+          <button type="button" class="lang-choice" data-lang="ru">
+            Русский <span class="lang-choice__arrow">→</span>
+          </button>
+          <button type="button" class="lang-choice" data-lang="uz">
+            O‘zbek <span class="lang-choice__arrow">→</span>
+          </button>
+          <button type="button" class="lang-choice" data-lang="en">
+            English <span class="lang-choice__arrow">→</span>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============ AUTH SCREEN ============ -->
+    <main id="authScreen" class="auth-screen" hidden>
+      <section class="auth-showcase">
+        <div class="brand-mark">
+          <svg viewBox="0 0 40 40" class="brand-mark__glyph">
+            <path
+              d="M4 20c2.5-9 4 9 6.5 0s4-13 6.5 0 4 13 6.5 0 4-9 6.5 0 4 9 6.5 0"
+            />
+          </svg>
+          <span class="brand-mark__word">HUM</span>
+        </div>
+        <h1 class="auth-showcase__title" data-i18n="auth.showcase.title">
+          Every conversation<br />has a frequency.
+        </h1>
+        <p class="auth-showcase__body" data-i18n="auth.showcase.body">
+          Find people, build your profile, and get ready to talk — HUM keeps the
+          signal clean and the noise out.
+        </p>
+        <ul class="auth-showcase__list">
+          <li>
+            <span class="dot"></span
+            ><span data-i18n="auth.showcase.point1"
+              >Search people by name or @username</span
+            >
+          </li>
+          <li>
+            <span class="dot"></span
+            ><span data-i18n="auth.showcase.point2"
+              >A profile that's actually yours</span
+            >
+          </li>
+          <li>
+            <span class="dot"></span
+            ><span data-i18n="auth.showcase.point3"
+              >Works in English, Русский and O‘zbek</span
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section class="auth-panel">
+        <div class="auth-card">
+          <div class="auth-tabs" role="tablist">
+            <button
+              class="auth-tab is-active"
+              id="tabLogin"
+              role="tab"
+              aria-selected="true"
+              data-i18n="auth.tabs.login"
+            >
+              Log in
+            </button>
+            <button
+              class="auth-tab"
+              id="tabRegister"
+              role="tab"
+              aria-selected="false"
+              data-i18n="auth.tabs.register"
+            >
+              Create account
+            </button>
+          </div>
+
+          <!-- LOGIN FORM -->
+          <form id="loginForm" class="auth-form" novalidate>
+            <h2 class="auth-form__title" data-i18n="auth.login.title">
+              Welcome back
+            </h2>
+            <p class="auth-form__subtitle" data-i18n="auth.login.subtitle">
+              Log in to pick up where you left off.
+            </p>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.username"
+                >Username</span
+              >
+              <div class="field__control">
+                <span class="field__prefix">@</span>
+                <input
+                  type="text"
+                  id="loginUsername"
+                  autocomplete="username"
+                  data-i18n-placeholder="common.usernamePlaceholder"
+                  placeholder="yourname"
+                />
+              </div>
+              <span class="field__error" id="err-loginUsername"></span>
+            </label>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.password"
+                >Password</span
+              >
+              <div class="field__control">
+                <input
+                  type="password"
+                  id="loginPassword"
+                  autocomplete="current-password"
+                  data-i18n-placeholder="common.passwordPlaceholder"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  class="field__toggle"
+                  data-toggle-for="loginPassword"
+                  data-i18n="common.show"
+                >
+                  Show
+                </button>
+              </div>
+              <span class="field__error" id="err-loginPassword"></span>
+            </label>
+
+            <span
+              class="field__error field__error--form"
+              id="err-loginForm"
+            ></span>
+
+            <button
+              type="submit"
+              class="btn btn--primary btn--block"
+              data-i18n="auth.login.submit"
+            >
+              Log in
+            </button>
+
+            <p class="auth-switch" data-i18n="auth.login.switchPrompt">
+              No account yet?
+              <button
+                type="button"
+                class="link"
+                id="goRegister"
+                data-i18n="auth.login.switchAction"
+              >
+                Create one
+              </button>
+            </p>
+          </form>
+
+          <!-- REGISTER FORM -->
+          <form id="registerForm" class="auth-form" novalidate hidden>
+            <h2 class="auth-form__title" data-i18n="auth.register.title">
+              Set your frequency
+            </h2>
+            <p class="auth-form__subtitle" data-i18n="auth.register.subtitle">
+              A few details and you're in.
+            </p>
+
+            <div class="avatar-picker">
+              <div
+                class="avatar-picker__preview avatar"
+                id="registerAvatarPreview"
+              ></div>
+              <div class="avatar-picker__actions">
+                <label
+                  class="btn btn--ghost btn--small"
+                  for="registerAvatarInput"
+                  data-i18n="profile.avatar.upload"
+                  >Upload photo</label
+                >
+                <input
+                  type="file"
+                  id="registerAvatarInput"
+                  accept="image/*"
+                  hidden
+                />
+                <button
+                  type="button"
+                  class="btn btn--ghost btn--small"
+                  id="registerAvatarClear"
+                  data-i18n="profile.avatar.remove"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.displayName"
+                >Display name</span
+              >
+              <div class="field__control">
+                <input
+                  type="text"
+                  id="registerDisplayName"
+                  autocomplete="name"
+                  maxlength="40"
+                  data-i18n-placeholder="common.displayNamePlaceholder"
+                  placeholder="Aziza Karimova"
+                />
+              </div>
+              <span class="field__error" id="err-registerDisplayName"></span>
+            </label>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.username"
+                >Username</span
+              >
+              <div class="field__control">
+                <span class="field__prefix">@</span>
+                <input
+                  type="text"
+                  id="registerUsername"
+                  autocomplete="username"
+                  maxlength="20"
+                  data-i18n-placeholder="common.usernamePlaceholder"
+                  placeholder="yourname"
+                />
+              </div>
+              <span
+                class="field__hint"
+                id="hint-registerUsername"
+                data-i18n="auth.register.usernameHint"
+                >3–20 characters: letters, numbers, underscore.</span
+              >
+              <span class="field__error" id="err-registerUsername"></span>
+            </label>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.password"
+                >Password</span
+              >
+              <div class="field__control">
+                <input
+                  type="password"
+                  id="registerPassword"
+                  autocomplete="new-password"
+                  data-i18n-placeholder="common.passwordPlaceholder"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  class="field__toggle"
+                  data-toggle-for="registerPassword"
+                  data-i18n="common.show"
+                >
+                  Show
+                </button>
+              </div>
+              <span class="field__hint" data-i18n="auth.register.passwordHint"
+                >At least 6 characters.</span
+              >
+              <span class="field__error" id="err-registerPassword"></span>
+            </label>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.confirmPassword"
+                >Confirm password</span
+              >
+              <div class="field__control">
+                <input
+                  type="password"
+                  id="registerConfirmPassword"
+                  autocomplete="new-password"
+                  data-i18n-placeholder="common.passwordPlaceholder"
+                  placeholder="••••••••"
+                />
+              </div>
+              <span
+                class="field__error"
+                id="err-registerConfirmPassword"
+              ></span>
+            </label>
+
+            <label class="field">
+              <span class="field__label" data-i18n="common.bio"
+                >About (optional)</span
+              >
+              <div class="field__control">
+                <textarea
+                  id="registerBio"
+                  maxlength="160"
+                  rows="2"
+                  data-i18n-placeholder="common.bioPlaceholder"
+                  placeholder="Say something about yourself"
+                ></textarea>
+              </div>
+            </label>
+
+            <span
+              class="field__error field__error--form"
+              id="err-registerForm"
+            ></span>
+
+            <button
+              type="submit"
+              class="btn btn--primary btn--block"
+              data-i18n="auth.register.submit"
+            >
+              Create account
+            </button>
+
+            <p class="auth-switch" data-i18n="auth.register.switchPrompt">
+              Already have an account?
+              <button
+                type="button"
+                class="link"
+                id="goLogin"
+                data-i18n="auth.register.switchAction"
+              >
+                Log in
+              </button>
+            </p>
+          </form>
+        </div>
+
+        <div class="auth-lang">
+          <button type="button" class="lang-pill" data-lang="en">EN</button>
+          <button type="button" class="lang-pill" data-lang="ru">RU</button>
+          <button type="button" class="lang-pill" data-lang="uz">UZ</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ MAIN APP ============ -->
+    <div id="appShell" class="app-shell" hidden>
+      <!-- NAV RAIL -->
+      <nav class="nav-rail">
+        <div class="nav-rail__brand">
+          <svg viewBox="0 0 40 40" class="brand-mark__glyph">
+            <path
+              d="M4 20c2.5-9 4 9 6.5 0s4-13 6.5 0 4 13 6.5 0 4-9 6.5 0 4 9 6.5 0"
+            />
+          </svg>
+        </div>
+        <button
+          class="nav-rail__item is-active"
+          id="navChats"
+          data-view="chats"
+          data-i18n-title="nav.chats"
+        >
+          <svg viewBox="0 0 24 24">
+            <path
+              d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4.4 3.3A.6.6 0 0 1 3 19.8V6a1 1 0 0 1 1-1Z"
+            />
+          </svg>
+          <span data-i18n="nav.chats">Chats</span>
+        </button>
+        <button
+          class="nav-rail__item"
+          id="navPeople"
+          data-view="people"
+          data-i18n-title="nav.people"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="8" r="3.4" />
+            <path d="M4.5 20c1.4-4.2 4.4-6.2 7.5-6.2s6.1 2 7.5 6.2" />
+          </svg>
+          <span data-i18n="nav.people">People</span>
+        </button>
+        <button
+          class="nav-rail__item"
+          id="navProfile"
+          data-view="profile"
+          data-i18n-title="nav.profile"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="8.5" />
+            <path
+              d="M12 11.2a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Zm-5 6c1-2.6 2.9-3.9 5-3.9s4 1.3 5 3.9"
+            />
+          </svg>
+          <span data-i18n="nav.profile">Profile</span>
+        </button>
+        <button
+          class="nav-rail__item"
+          id="navSettings"
+          data-view="settings"
+          data-i18n-title="nav.settings"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="2.6" />
+            <path
+              d="M12 4.5v2M12 17.5v2M19.5 12h-2M6.5 12h-2M17.4 6.6l-1.4 1.4M8 14.6l-1.4 1.4M17.4 17.4 16 16M8 9.4 6.6 8"
+            />
+          </svg>
+          <span data-i18n="nav.settings">Settings</span>
+        </button>
+        <div class="nav-rail__spacer"></div>
+        <button
+          class="nav-rail__item nav-rail__item--danger"
+          id="navLogout"
+          data-i18n-title="nav.logout"
+        >
+          <svg viewBox="0 0 24 24">
+            <path d="M9 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h3" />
+            <path d="M15 16l4-4-4-4M19 12H9" />
+          </svg>
+          <span data-i18n="nav.logout">Log out</span>
+        </button>
+      </nav>
+
+      <!-- SECONDARY PANEL (chats / people) -->
+      <section class="panel-list" id="panelList">
+        <div class="panel-list__view" id="viewChats" data-panel-view="chats">
+          <header class="panel-list__header">
+            <h2 data-i18n="chats.title">Chats</h2>
+          </header>
+          <!--
+            Populated by renderChatsList() in app.js: either the list of
+            existing conversations (avatar, name, last message preview,
+            time) sorted by most recent activity, or the same empty state
+            that used to be hard-coded here when there are no
+            conversations yet. Kept as one dynamic container so the panel
+            always reflects the current localStorage message data.
+          -->
+          <div class="people-results" id="chatsListContainer"></div>
+        </div>
+
+        <div
+          class="panel-list__view"
+          id="viewPeople"
+          data-panel-view="people"
+          hidden
+        >
+          <header class="panel-list__header">
+            <h2 data-i18n="people.title">Find people</h2>
+          </header>
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" class="search-box__icon">
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="M20 20l-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              id="peopleSearchInput"
+              data-i18n-placeholder="people.searchPlaceholder"
+              placeholder="Search by name or @username"
+            />
+          </div>
+          <div class="people-results" id="peopleResults"></div>
+        </div>
+      </section>
+
+      <!-- MAIN CONTENT -->
+      <section class="panel-main" id="panelMain">
+        <div class="main-view" id="mainWelcome" data-main-view="welcome">
+          <div class="welcome">
+            <svg
+              viewBox="0 0 40 40"
+              class="brand-mark__glyph brand-mark__glyph--lg"
+            >
+              <path
+                d="M4 20c2.5-9 4 9 6.5 0s4-13 6.5 0 4 13 6.5 0 4-9 6.5 0 4 9 6.5 0"
+              />
+            </svg>
+            <h2 data-i18n="welcome.title">Welcome to HUM</h2>
+            <p data-i18n="welcome.body">
+              Search for someone on the left, or open your profile to make it
+              your own.
+            </p>
+          </div>
+        </div>
+
+        <div
+          class="main-view"
+          id="mainProfileView"
+          data-main-view="profileView"
+          hidden
+        ></div>
+
+        <div
+          class="main-view"
+          id="mainProfileEdit"
+          data-main-view="profile"
+          hidden
+        >
+          <header class="main-header">
+            <h2 data-i18n="profile.title">Your profile</h2>
+            <button
+              class="btn btn--ghost btn--small"
+              id="profileEditToggle"
+              data-i18n="profile.edit"
+            >
+              Edit profile
+            </button>
+          </header>
+
+          <div class="profile-layout">
+            <div class="profile-summary" id="profileSummary"></div>
+
+            <form id="profileForm" class="profile-form" hidden novalidate>
+              <div class="avatar-picker">
+                <div
+                  class="avatar-picker__preview avatar"
+                  id="profileAvatarPreview"
+                ></div>
+                <div class="avatar-picker__actions">
+                  <label
+                    class="btn btn--ghost btn--small"
+                    for="profileAvatarInput"
+                    data-i18n="profile.avatar.upload"
+                    >Upload photo</label
+                  >
+                  <input
+                    type="file"
+                    id="profileAvatarInput"
+                    accept="image/*"
+                    hidden
+                  />
+                  <button
+                    type="button"
+                    class="btn btn--ghost btn--small"
+                    id="profileAvatarClear"
+                    data-i18n="profile.avatar.remove"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              <label class="field">
+                <span class="field__label" data-i18n="common.displayName"
+                  >Display name</span
+                >
+                <div class="field__control">
+                  <input type="text" id="profileDisplayName" maxlength="40" />
+                </div>
+                <span class="field__error" id="err-profileDisplayName"></span>
+              </label>
+
+              <label class="field">
+                <span class="field__label" data-i18n="common.username"
+                  >Username</span
+                >
+                <div class="field__control">
+                  <span class="field__prefix">@</span>
+                  <input type="text" id="profileUsername" maxlength="20" />
+                </div>
+                <span class="field__error" id="err-profileUsername"></span>
+              </label>
+
+              <label class="field">
+                <span class="field__label" data-i18n="common.bio">About</span>
+                <div class="field__control">
+                  <textarea id="profileBio" maxlength="160" rows="3"></textarea>
+                </div>
+              </label>
+
+              <span
+                class="field__error field__error--form"
+                id="err-profileForm"
+              ></span>
+
+              <div class="profile-form__actions">
+                <button
+                  type="button"
+                  class="btn btn--ghost"
+                  id="profileCancelEdit"
+                  data-i18n="common.cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  class="btn btn--primary"
+                  data-i18n="common.saveChanges"
+                >
+                  Save changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div
+          class="main-view"
+          id="mainSettings"
+          data-main-view="settings"
+          hidden
+        >
+          <header class="main-header">
+            <h2 data-i18n="settings.title">Settings</h2>
+          </header>
+
+          <div class="settings-group">
+            <h3 data-i18n="settings.language">Language</h3>
+            <p class="settings-group__hint" data-i18n="settings.languageHint">
+              Choose the language HUM speaks to you in.
+            </p>
+            <div class="lang-options">
+              <button type="button" class="lang-option" data-lang="en">
+                <span class="lang-option__code">EN</span><span>English</span>
+              </button>
+              <button type="button" class="lang-option" data-lang="ru">
+                <span class="lang-option__code">RU</span><span>Русский</span>
+              </button>
+              <button type="button" class="lang-option" data-lang="uz">
+                <span class="lang-option__code">UZ</span><span>O‘zbek</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <h3 data-i18n="settings.appearance">Appearance</h3>
+            <p class="settings-group__hint" data-i18n="settings.appearanceHint">
+              Switch between a dark or light signal.
+            </p>
+            <div class="theme-toggle" id="themeToggle">
+              <button
+                type="button"
+                class="theme-toggle__btn"
+                data-theme="dark"
+                data-i18n="settings.dark"
+              >
+                Dark
+              </button>
+              <button
+                type="button"
+                class="theme-toggle__btn"
+                data-theme="light"
+                data-i18n="settings.light"
+              >
+                Light
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-group settings-group--danger">
+            <h3 data-i18n="settings.account">Account</h3>
+            <p class="settings-group__hint" id="settingsAccountHint">
+              Signed in as <span id="settingsUsername">—</span>.
+            </p>
+            <button
+              type="button"
+              class="btn btn--danger btn--small"
+              id="settingsLogout"
+              data-i18n="nav.logout"
+            >
+              Log out
+            </button>
+          </div>
+        </div>
+
+        <!-- ============ CHAT VIEW ============ -->
+        <div
+          class="main-view chat-view"
+          id="mainChat"
+          data-main-view="chat"
+          hidden
+        >
+          <header class="chat-header" id="chatHeaderInfo">
+            <div class="avatar avatar--online" id="chatHeaderAvatar"></div>
+            <div class="chat-header__info">
+              <div class="chat-header__name" id="chatHeaderName"></div>
+              <div class="chat-header__handle" id="chatHeaderHandle"></div>
+            </div>
+          </header>
+
+          <div class="chat-messages" id="chatMessages"></div>
+
+          <form class="chat-composer" id="chatComposerForm">
+            <textarea
+              class="chat-composer__input"
+              id="chatInput"
+              rows="1"
+              maxlength="4000"
+              data-i18n-placeholder="chat.inputPlaceholder"
+              placeholder="Message"
+            ></textarea>
+            <button
+              type="submit"
+              class="btn btn--primary chat-composer__send"
+              id="chatSendBtn"
+              data-i18n-title="chat.send"
+              title="Send"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <path d="M4 12l16-8-6 8 6 8-16-8Z" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- MOBILE BOTTOM NAV -->
+      <nav class="mobile-nav">
+        <button
+          class="mobile-nav__item is-active"
+          data-view="chats"
+          data-i18n-title="nav.chats"
+        >
+          <svg viewBox="0 0 24 24">
+            <path
+              d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4.4 3.3A.6.6 0 0 1 3 19.8V6a1 1 0 0 1 1-1Z"
+            />
+          </svg>
+        </button>
+        <button
+          class="mobile-nav__item"
+          data-view="people"
+          data-i18n-title="nav.people"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="8" r="3.4" />
+            <path d="M4.5 20c1.4-4.2 4.4-6.2 7.5-6.2s6.1 2 7.5 6.2" />
+          </svg>
+        </button>
+        <button
+          class="mobile-nav__item"
+          data-view="profile"
+          data-i18n-title="nav.profile"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="8.5" />
+            <path
+              d="M12 11.2a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Zm-5 6c1-2.6 2.9-3.9 5-3.9s4 1.3 5 3.9"
+            />
+          </svg>
+        </button>
+        <button
+          class="mobile-nav__item"
+          data-view="settings"
+          data-i18n-title="nav.settings"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="2.6" />
+            <path
+              d="M12 4.5v2M12 17.5v2M19.5 12h-2M6.5 12h-2M17.4 6.6l-1.4 1.4M8 14.6l-1.4 1.4M17.4 17.4 16 16M8 9.4 6.6 8"
+            />
+          </svg>
+        </button>
+      </nav>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
