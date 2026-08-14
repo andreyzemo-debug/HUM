@@ -1317,6 +1317,9 @@ function openChat(username, navigate) {
   renderChatMessages();
   setMainView("chat");
   if (navigate) openMobileDetail();
+  // Clear any leftover draft from a previously open conversation so text
+  // typed for one person never leaks into a different person's chat.
+  if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
 }
 
@@ -1327,10 +1330,22 @@ els.chatHeaderInfo.addEventListener("click", () => {
   if (state.activeChatUsername) openProfileView(state.activeChatUsername, true);
 });
 
+// Keep in sync with the max-height set on .chat-composer__input in
+// style.css. Resets to "auto" first so shrinking (e.g. after deleting
+// text, or after a message is sent) is measured correctly too, not
+// just growth.
+const CHAT_INPUT_MAX_HEIGHT = 132;
+
 function autoSizeChatInput() {
   if (!els.chatInput) return;
-  els.chatInput.style.height = "auto";
-  els.chatInput.style.height = Math.min(els.chatInput.scrollHeight, 120) + "px";
+  const el = els.chatInput;
+  el.style.height = "auto";
+  const next = Math.min(el.scrollHeight, CHAT_INPUT_MAX_HEIGHT);
+  el.style.height = next + "px";
+  // Only let the textarea show its own scrollbar once content truly
+  // exceeds the max height — otherwise it stays hidden so no scrollbar
+  // ever flashes during normal typing.
+  el.classList.toggle("is-scrollable", el.scrollHeight > CHAT_INPUT_MAX_HEIGHT);
 }
 
 function sendChatMessage() {
@@ -1500,6 +1515,27 @@ function enterApp() {
   const me = currentUser(state.session);
   if (me) updateSettingsAccountHint(me.username);
 }
+
+// iOS Safari's fixed-position elements are sized against the *layout*
+// viewport, which doesn't shrink when the on-screen keyboard opens —
+// only the *visual* viewport does. Mirroring the real visible height
+// onto a CSS variable (--app-vh) lets the fixed panel/composer layout
+// in style.css shrink to match, so the chat input stays above the
+// keyboard instead of being hidden behind it. Falls back to
+// window.innerHeight on browsers without the Visual Viewport API,
+// which is still strictly better than nothing.
+function syncViewportHeight() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty("--app-vh", h + "px");
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncViewportHeight);
+  window.visualViewport.addEventListener("scroll", syncViewportHeight);
+}
+window.addEventListener("resize", syncViewportHeight);
+window.addEventListener("orientationchange", syncViewportHeight);
+syncViewportHeight();
 
 function init() {
   initTheme();

@@ -28,6 +28,8 @@
   --shadow-soft:0 12px 40px rgba(0,0,0,.35);
   --nav-rail-w:84px;
   --panel-list-w:340px;
+  --mobile-nav-h:60px;
+  --composer-h:44px;
 }
 
 [data-theme="light"]{
@@ -213,8 +215,10 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
    LANGUAGE SELECTION SCREEN (first launch)
 =================================================================== */
 .lang-screen{
-  position:relative;z-index:1;min-height:100vh;min-height:100dvh;
-  display:flex;align-items:center;justify-content:center;padding:32px;
+  position:relative;z-index:1;min-height:100vh;min-height:100dvh;min-height:var(--app-vh,100dvh);
+  display:flex;align-items:center;justify-content:center;
+  padding:max(32px,env(safe-area-inset-top)) max(32px,env(safe-area-inset-right))
+    max(32px,env(safe-area-inset-bottom)) max(32px,env(safe-area-inset-left));
 }
 .lang-screen__card{
   width:100%;max-width:420px;text-align:center;
@@ -236,7 +240,10 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .lang-choice__arrow{color:var(--text-faint);font-weight:400;transition:transform .15s ease,color .15s ease;}
 .lang-choice:hover .lang-choice__arrow{color:var(--accent);transform:translateX(3px);}
 @media (max-width:480px){
-  .lang-screen{padding:20px;}
+  .lang-screen{
+    padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right))
+      max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+  }
   .lang-screen__card{padding:38px 24px;border-radius:var(--radius-md);}
 }
 
@@ -244,7 +251,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
    AUTH SCREEN
 =================================================================== */
 .auth-screen{
-  position:relative;z-index:1;min-height:100vh;display:grid;
+  position:relative;z-index:1;min-height:100vh;min-height:100dvh;min-height:var(--app-vh,100dvh);display:grid;
   grid-template-columns:1.05fr 1fr;
 }
 .auth-showcase{
@@ -269,7 +276,10 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .auth-form__subtitle{color:var(--text-muted);font-size:14px;margin-bottom:26px;display:block;}
 .auth-switch{text-align:center;font-size:13.5px;color:var(--text-muted);margin-top:18px;}
 
-.auth-lang{position:absolute;top:28px;right:32px;display:flex;gap:6px;}
+.auth-lang{
+  position:absolute;top:max(28px,env(safe-area-inset-top));right:max(32px,env(safe-area-inset-right));
+  display:flex;gap:6px;
+}
 .lang-pill{
   border:1px solid var(--border);background:var(--surface);color:var(--text-muted);
   font-family:var(--font-mono);font-size:11.5px;font-weight:700;padding:6px 11px;
@@ -284,7 +294,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .app-shell{
   position:relative;z-index:1;
   display:grid;grid-template-columns:var(--nav-rail-w) var(--panel-list-w) 1fr;
-  height:100vh;
+  height:100vh;height:100dvh;height:var(--app-vh,100dvh);
 }
 .nav-rail{
   background:var(--bg-elevated);border-right:1px solid var(--border);
@@ -343,8 +353,20 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .people-results__empty{padding:40px 20px;text-align:center;color:var(--text-faint);font-size:13.5px;}
 .people-results__hint{padding:16px 10px;color:var(--text-faint);font-size:12.5px;text-align:center;}
 
-.panel-main{overflow-y:auto;padding:0;position:relative;}
-.main-view{height:100%;}
+/* ===================================================================
+   panel-main is a flex column (not just a scrolling box) so that the
+   mobile "Back" button — which is a real sibling element sitting above
+   the active main-view, not something laid over it — never steals
+   height from that view. Each .main-view is a flex:1 item that always
+   gets exactly the remaining space and handles its own vertical
+   scrolling. This is what keeps the chat composer pinned to the true
+   bottom of the chat on every screen size instead of being pushed
+   below the fold by the back button's height.
+=================================================================== */
+.panel-main{
+  display:flex;flex-direction:column;overflow:hidden;padding:0;position:relative;
+}
+.main-view{flex:1;min-height:0;overflow-y:auto;}
 .welcome{
   height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
   text-align:center;padding:40px;
@@ -400,10 +422,10 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
    Chats list once a conversation exists)
 =================================================================== */
 .chat-view{
-  display:flex;flex-direction:column;height:100%;overflow:hidden;
+  display:flex;flex-direction:column;overflow:hidden;
 }
 .chat-header{
-  display:flex;align-items:center;gap:12px;padding:20px 40px;flex:none;
+  display:flex;align-items:center;gap:12px;padding:18px 40px;flex:none;
   border-bottom:1px solid var(--border);cursor:pointer;background:none;
 }
 .chat-header .avatar{width:42px;height:42px;font-size:15px;}
@@ -414,6 +436,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .chat-messages{
   flex:1;min-height:0;overflow-y:auto;padding:24px 40px;
   display:flex;flex-direction:column;gap:12px;
+  width:100%;max-width:920px;margin-left:auto;margin-right:auto;
 }
 .chat-empty{
   flex:1;display:flex;align-items:center;justify-content:center;
@@ -431,18 +454,46 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .chat-msg--own .chat-msg__bubble{background:var(--accent);color:#0d0f14;border-color:transparent;}
 .chat-msg__time{font-size:11px;color:var(--text-faint);margin-top:4px;padding:0 2px;}
 
+/* Composer: input and send button share --composer-h so they always
+   line up exactly, at every breakpoint (see the --composer-h override
+   in the small-phone media query below instead of separately resizing
+   each element). The textarea starts at --composer-h for one line,
+   grows with content up to a fixed max, and only shows its own
+   scrollbar once it actually reaches that max — the .is-scrollable
+   class is toggled by autoSizeChatInput() in app.js, so no scrollbar
+   ever flashes during normal typing. */
 .chat-composer{
-  display:flex;align-items:flex-end;gap:10px;padding:16px 40px;flex:none;
-  border-top:1px solid var(--border);
+  display:flex;align-items:flex-end;gap:10px;padding:14px 40px;flex:none;
+  border-top:1px solid var(--border);background:var(--bg-elevated);
 }
 .chat-composer__input{
   flex:1;min-width:0;resize:none;background:var(--surface);border:1.5px solid var(--border);
-  border-radius:var(--radius-sm);padding:11px 14px;color:var(--text);font-family:inherit;
-  font-size:14.5px;line-height:1.4;max-height:120px;outline:none;transition:border-color .15s ease;
+  border-radius:var(--radius-sm);padding:11px 16px;color:var(--text);font-family:inherit;
+  font-size:14.5px;line-height:1.4;box-sizing:border-box;
+  min-height:var(--composer-h);max-height:132px;
+  outline:none;overflow-y:hidden;transition:border-color .15s ease;
 }
 .chat-composer__input:focus{border-color:var(--accent);}
-.chat-composer__send{flex:none;width:42px;height:42px;padding:0;border-radius:50%;}
+.chat-composer__input.is-scrollable{overflow-y:auto;}
+.chat-composer__send{
+  flex:none;width:var(--composer-h);height:var(--composer-h);padding:0;border-radius:50%;
+}
 .chat-composer__send svg{width:18px;height:18px;}
+
+/* Keep the header/composer borders and background spanning the full
+   width of the chat column (so they don't look like they're floating
+   mid-row), but on wide desktop/monitor screens push their inner
+   padding in so the avatar/name and the input/button don't stretch
+   edge-to-edge. Below ~1000px viewport width this calc() just settles
+   back to the normal 40px padding, so it never fights the mobile
+   media-query overrides further down. Declared after the shorthand
+   `padding` rules above on purpose — a shorthand always resets its
+   longhand sub-properties, so this has to come later in the cascade
+   or it would get silently overwritten. */
+.chat-header,.chat-composer{
+  padding-left:max(40px,calc((100% - 920px) / 2));
+  padding-right:max(40px,calc((100% - 920px) / 2));
+}
 
 .mobile-nav{display:none;}
 
@@ -456,20 +507,39 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 }
 
 @media (max-width:860px){
-  .app-shell{grid-template-columns:1fr;grid-template-rows:1fr auto;height:100dvh;}
+  .app-shell{grid-template-columns:1fr;grid-template-rows:1fr auto;height:100dvh;height:var(--app-vh,100dvh);}
   .nav-rail{display:none;}
+  /*
+    iOS Safari quirk: position:fixed elements are anchored to the
+    *layout* viewport, which does NOT shrink when the on-screen
+    keyboard opens (only the *visual* viewport does) — so a fixed
+    element sized with `inset:0 0 <fixed value> 0` can end up with its
+    bottom edge sitting behind the keyboard instead of above it. Using
+    an explicit `height` driven by --app-vh (kept in sync with
+    window.visualViewport by app.js) instead of a bottom inset means
+    this height actually shrinks as the keyboard opens, keeping the
+    chat composer above it rather than hidden behind it.
+  */
   .panel-list{
-    position:fixed;inset:0 0 60px 0;z-index:5;border-right:none;
+    position:fixed;top:0;left:0;right:0;z-index:5;border-right:none;
+    height:calc(var(--app-vh,100dvh) - var(--mobile-nav-h) - env(safe-area-inset-bottom));
+    padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
     transform:translateX(0);transition:transform .25s ease;
   }
   .panel-main{
-    position:fixed;inset:0 0 60px 0;z-index:6;background:var(--bg);
+    position:fixed;top:0;left:0;right:0;z-index:6;background:var(--bg);
+    height:calc(var(--app-vh,100dvh) - var(--mobile-nav-h) - env(safe-area-inset-bottom));
+    padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
     transform:translateX(100%);transition:transform .25s ease;
   }
   .app-shell.is-detail-open .panel-main{transform:translateX(0);}
   .app-shell.is-detail-open .panel-list{transform:translateX(-6%);opacity:.4;pointer-events:none;}
   .mobile-nav{
-    display:flex;position:fixed;left:0;right:0;bottom:0;height:60px;z-index:7;
+    display:flex;position:fixed;left:0;right:0;z-index:7;
+    top:calc(var(--app-vh,100dvh) - var(--mobile-nav-h) - env(safe-area-inset-bottom));
+    height:calc(var(--mobile-nav-h) + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom);
+    padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
     background:var(--bg-elevated);border-top:1px solid var(--border);
     align-items:center;justify-content:space-around;
   }
@@ -477,7 +547,6 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   .mobile-nav__item svg{width:22px;height:22px;}
   .mobile-nav__item.is-active{color:var(--accent);}
   .main-header,.settings-group,.profile-layout,.profile-hero,.profile-meta{padding-left:22px;padding-right:22px;}
-  .main-view#mainMainViewBack{display:block;}
   .chat-header,.chat-messages,.chat-composer{padding-left:22px;padding-right:22px;}
   .chat-msg{max-width:80%;}
 }
@@ -488,12 +557,12 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   .result-row .btn{display:none;}
   .chat-header,.chat-messages,.chat-composer{padding-left:14px;padding-right:14px;}
   .chat-msg{max-width:88%;}
-  .chat-composer__send{width:38px;height:38px;}
+  :root{--composer-h:40px;}
 }
 
 .back-btn{
   display:none;align-items:center;gap:6px;background:none;border:none;color:var(--accent);
-  font-weight:700;font-size:13.5px;padding:18px 22px 0;cursor:pointer;
+  font-weight:700;font-size:13.5px;padding:18px 22px 0;cursor:pointer;flex:none;
 }
 @media (max-width:860px){
   .back-btn{display:inline-flex;}
