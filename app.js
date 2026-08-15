@@ -4,23 +4,143 @@
 // This file contains ALL application JavaScript in one place, on
 // purpose: storage, i18n, auth, rendering, and UI wiring all live
 // here as clearly-labeled sections instead of separate modules.
-// There are no import/export statements anywhere in this file or in
-// index.html — it's loaded as a single plain <script src="js/app.js">.
+// It's loaded as a single <script type="module" src="app.js">. It
+// needs to be a module (not a plain classic script) for exactly one
+// reason: the Firebase SDK is distributed as ES modules, and importing
+// it is what turns HUM's user accounts and messages from "only exist
+// in this one browser's localStorage" into a real, shared, cross-device
+// backend. Everything else about the file's structure — one big file,
+// clearly labeled sections, no other imports/exports — is unchanged.
+//
+// IMPORTANT — SERVING THIS FILE:
+// Because app.js is now an ES module, browsers will refuse to load it
+// over a bare file:// URL (that's a browser security restriction on
+// modules, not something in this code). Serve the HUM folder over
+// http/https — e.g. `npx serve .`, `python3 -m http.server`, or any
+// static host — the same way you'd serve any other static site.
+//
+// WHY A BACKEND IS NEEDED AT ALL:
+// localStorage is sandboxed per browser origin *and* per device — data
+// written on one phone/laptop is physically never visible to another
+// device or browser. There is no way to make People Search (or
+// messaging) work across devices without some shared, network-reachable
+// store that every device talks to. This file uses Firebase
+// (Authentication + Firestore) for that: it's a real hosted database
+// with a client SDK that needs zero custom server code, which fits a
+// static, backend-less project like HUM better than standing up a
+// custom API. Firebase Authentication stores and verifies passwords
+// (real, salted, server-side — not the old local prototype hash), and
+// Firestore stores user profiles and messages so any device can read
+// and write them.
+//
+// SETUP YOU NEED TO DO ONCE (I can't create a live cloud project for
+// you — this requires your own Firebase account):
+//   1. Go to https://console.firebase.google.com, create a project.
+//   2. Build → Authentication → get started → enable "Email/Password".
+//   3. Build → Firestore Database → create database (start in
+//      "production mode" — the security rules below assume that).
+//   4. Project settings → General → "Your apps" → add a Web app →
+//      copy the firebaseConfig object it gives you into
+//      FIREBASE_CONFIG right below this comment.
+//   5. Firestore → Rules, paste:
+//        rules_version = '2';
+//        service cloud.firestore {
+//          match /databases/{database}/documents {
+//            match /users/{userId} {
+//              allow read: if true;
+//              allow create: if request.auth != null
+//                && request.auth.uid == request.resource.data.uid;
+//              allow update: if request.auth != null
+//                && request.auth.uid == resource.data.uid;
+//              allow delete: if false;
+//            }
+//            match /conversations/{convId} {
+//              allow read, write: if request.auth != null;
+//              match /messages/{msgId} {
+//                allow read, create: if request.auth != null;
+//                allow update, delete: if false;
+//              }
+//            }
+//          }
+//        }
+//      (Profiles are readable by anyone signed in or not, which is
+//      what lets People Search work — but only the profile's own
+//      owner, proven by their Firebase Auth uid, can create/edit it.
+//      Conversations/messages require being signed in. Locking
+//      conversation access down to only its two participants needs
+//      mapping each request.auth.uid to a username inside the rules,
+//      which Firestore rules can do via get() — a reasonable next
+//      hardening step once you're past the prototype stage.)
 // ===================================================================
 
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateEmail,
+  signOut,
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  collection,
+  query as fbQuery,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  addDoc,
+  onSnapshot,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+// Replace with YOUR OWN Firebase project's config (see setup steps
+// above). Every device that opens HUM with this same config is talking
+// to the same shared project — that's what makes accounts and messages
+// cross-device instead of stuck in one browser.
+const FIREBASE_CONFIG = {
+  apiKey: "YOUR_FIREBASE_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+const firebaseApp = initializeApp(FIREBASE_CONFIG);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+// Keeps the signed-in session across page reloads/tabs on this device
+// (Firebase's own equivalent of the old hum_session localStorage key —
+// see onAuthReady() further down, which is what now decides whether to
+// show the auth screen or go straight into the app on load).
+setPersistence(auth, browserLocalPersistence).catch(() => {});
+
+// HUM's UI is username/password, but Firebase Authentication is built
+// around email/password. Rather than adding a whole second identity
+// system, each username deterministically maps to a synthetic email
+// that's never shown anywhere in the UI — the person never sees or
+// types an "email" at any point.
+function emailForUsername(username) {
+  return usernameDocId(username) + "@hum.local";
+}
+
 /* ===================================================================
-   SECTION: LOCALSTORAGE LAYER
-   All keys are namespaced under "hum_" so the app never collides with
-   other data on the same origin. This is the single place that talks
-   to localStorage; everything else goes through here, which makes it
-   easy to later swap in a real backend/API.
+   SECTION: LOCAL (DEVICE-ONLY) STORAGE LAYER
+   Only things that are genuinely per-device — language and theme
+   preference — still live in localStorage. Accounts and messages are
+   shared data now, so they live in Firestore (see the next section);
+   localStorage is no longer the source of truth for either.
 =================================================================== */
 const KEYS = {
-  USERS:'hum_users',
-  SESSION:'hum_session',
   LANG:'hum_lang',
-  THEME:'hum_theme',
-  MESSAGES:'hum_messages'
+  THEME:'hum_theme'
 };
 
 function getItem(key, fallback = null){
@@ -43,102 +163,134 @@ function setItem(key, value){
   }
 }
 
-function removeItem(key){
-  try{ localStorage.removeItem(key); }catch(e){ /* noop */ }
-}
-
-/* ---------------- Users ---------------- */
-
-function getUsers(){
-  return getItem(KEYS.USERS, []);
-}
-
-function saveUsers(users){
-  return setItem(KEYS.USERS, users);
-}
-
-function findUserByUsername(username){
-  if(!username) return null;
-  const lower = username.toLowerCase();
-  return getUsers().find(u => u.username.toLowerCase() === lower) || null;
-}
-
-function upsertUser(user){
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === user.id);
-  if(idx === -1) users.push(user);
-  else users[idx] = user;
-  saveUsers(users);
-}
-
 function hasStoredLang(){
   return localStorage.getItem(KEYS.LANG) !== null;
 }
 
-/* ---------------- Session ---------------- */
+/* ===================================================================
+   SECTION: USERS (Firestore)
+   Each user's document lives at users/{usernameLower} — using the
+   lowercased username as the document ID is what makes usernames
+   unique and lookups a single direct read instead of a search query.
+=================================================================== */
 
-function getSession(){
-  return getItem(KEYS.SESSION, null); // username string
+function usernameDocId(username){
+  return String(username || '').trim().toLowerCase();
 }
 
-function setSession(username){
-  setItem(KEYS.SESSION, username);
+async function findUserByUsername(username){
+  if(!username) return null;
+  const snap = await getDoc(doc(db, 'users', usernameDocId(username)));
+  return snap.exists() ? snap.data() : null;
 }
 
-function clearSession(){
-  removeItem(KEYS.SESSION);
+// The signed-in user's own profile, kept resolved in memory the whole
+// session (see onAuthReady/registerUser/loginUser/updateProfile) so
+// the many places in the UI that just need "who am I right now" can
+// read it synchronously instead of re-awaiting Firestore on every
+// render. Firestore is still the source of truth — this is a cache of
+// it, refreshed whenever it changes.
+function currentUser(){
+  return state.me || null;
 }
 
-/* ---------------- Messages / Conversations ----------------
-   Stored as: { [conversationId]: { participants:[usernameA,usernameB], messages:[{id,from,text,ts}] } }
-   conversationId is a stable, order-independent key for a pair of users,
-   so "A talks to B" and "B talks to A" always resolve to the same
-   conversation, and a conversation between A and C never touches it. */
+/* ---------------- Messages / Conversations (Firestore) ----------------
+   conversations/{conversationId} holds the two participants (as
+   lowercased usernames) plus a denormalized copy of their display
+   info and the last message, so the Chats list can render without an
+   extra lookup per row. conversationId is a stable, order-independent
+   key for a pair of users, so "A messages B" and "B messages A" always
+   resolve to the same conversation, and a conversation between A and C
+   never touches it. Actual messages live in the
+   conversations/{id}/messages subcollection. */
 
 function conversationId(usernameA, usernameB){
-  return [String(usernameA).toLowerCase(), String(usernameB).toLowerCase()].sort().join('::');
+  return [usernameDocId(usernameA), usernameDocId(usernameB)].sort().join('__');
 }
 
-function getMessagesStore(){
-  return getItem(KEYS.MESSAGES, {});
+function conversationInfo(user){
+  return { username: user.username, displayName: user.displayName, avatar: user.avatar || { type:'generated' } };
 }
 
-function saveMessagesStore(store){
-  setItem(KEYS.MESSAGES, store);
-}
-
-function getConversationMessages(convId){
-  const store = getMessagesStore();
-  const conv = store[convId];
-  return conv ? conv.messages : [];
-}
-
-function addMessage(usernameA, usernameB, fromUsername, text){
-  const convId = conversationId(usernameA, usernameB);
-  const store = getMessagesStore();
-  if(!store[convId]){
-    store[convId] = { participants:[usernameA, usernameB], messages:[] };
+async function ensureConversation(meUser, otherUser){
+  const convId = conversationId(meUser.username, otherUser.username);
+  const ref = doc(db, 'conversations', convId);
+  const snap = await getDoc(ref);
+  if(!snap.exists()){
+    await setDoc(ref, {
+      participants: [usernameDocId(meUser.username), usernameDocId(otherUser.username)],
+      participantsInfo: {
+        [usernameDocId(meUser.username)]: conversationInfo(meUser),
+        [usernameDocId(otherUser.username)]: conversationInfo(otherUser),
+      },
+      lastMessage: null,
+      updatedAt: new Date().toISOString(),
+    });
   }
-  const message = { id: genId(), from: fromUsername, text, ts: new Date().toISOString() };
-  store[convId].messages.push(message);
-  saveMessagesStore(store);
+  return convId;
+}
+
+// Sends a message and returns it. meUser/otherUser are full user
+// objects (not just usernames) because the conversation doc keeps a
+// denormalized copy of each participant's display info for the Chats
+// list — that copy refreshes on every message either of them sends, so
+// it can go a little stale between messages (e.g. right after someone
+// changes their display name) but never for long.
+async function addMessage(meUser, otherUser, text){
+  const convId = await ensureConversation(meUser, otherUser);
+  const message = { from: usernameDocId(meUser.username), text, ts: new Date().toISOString() };
+  await addDoc(collection(db, 'conversations', convId, 'messages'), message);
+  await setDoc(doc(db, 'conversations', convId), {
+    participantsInfo: {
+      [usernameDocId(meUser.username)]: conversationInfo(meUser),
+    },
+    lastMessage: message,
+    updatedAt: message.ts,
+  }, { merge:true });
   return message;
 }
 
-// Returns this user's conversations that have at least one message,
-// each paired with its other participant and most recent message,
-// sorted with the most recently active conversation first.
-function getUserConversations(username){
-  const lower = String(username).toLowerCase();
-  const store = getMessagesStore();
-  return Object.keys(store)
-    .map(id => store[id])
-    .filter(conv => conv.messages.length && conv.participants.some(p => p.toLowerCase() === lower))
-    .map(conv => {
-      const otherUsername = conv.participants.find(p => p.toLowerCase() !== lower) || conv.participants[0];
-      return { otherUsername, lastMessage: conv.messages[conv.messages.length - 1] };
-    })
-    .sort((a, b) => new Date(b.lastMessage.ts) - new Date(a.lastMessage.ts));
+// Live-subscribes to one conversation's messages, oldest first. Calls
+// onChange(messages) every time the subcollection changes (including
+// the very first load) so the open chat updates the moment the other
+// person replies, on any device. Returns an unsubscribe function.
+function watchConversationMessages(usernameA, usernameB, onChange){
+  const convId = conversationId(usernameA, usernameB);
+  const q = fbQuery(collection(db, 'conversations', convId, 'messages'), orderBy('ts', 'asc'));
+  return onSnapshot(q, (snap) => {
+    onChange(snap.docs.map(d => d.data()));
+  }, (err) => {
+    console.error('HUM: message listener failed', err);
+    onChange(null, err);
+  });
+}
+
+// Live-subscribes to this user's conversation list, most recently
+// active first, using the denormalized participantsInfo/lastMessage so
+// the Chats panel can render straight from this snapshot with no
+// further reads. Returns an unsubscribe function.
+function watchUserConversations(username, onChange){
+  const lower = usernameDocId(username);
+  const q = fbQuery(
+    collection(db, 'conversations'),
+    where('participants', 'array-contains', lower),
+    orderBy('updatedAt', 'desc'),
+  );
+  return onSnapshot(q, (snap) => {
+    const rows = snap.docs
+      .map(d => d.data())
+      .filter(conv => conv.lastMessage)
+      .map(conv => {
+        const otherLower = conv.participants.find(p => p !== lower) || conv.participants[0];
+        const otherInfo = conv.participantsInfo && conv.participantsInfo[otherLower];
+        return otherInfo ? { other: otherInfo, lastMessage: conv.lastMessage } : null;
+      })
+      .filter(Boolean);
+    onChange(rows);
+  }, (err) => {
+    console.error('HUM: conversations listener failed', err);
+    onChange(null, err);
+  });
 }
 
 /* ===================================================================
@@ -155,7 +307,13 @@ const translations = {
       displayName:'Display name', displayNamePlaceholder:'Aziza Karimova',
       bio:'About', bioPlaceholder:'Say something about yourself',
       show:'Show', hide:'Hide', cancel:'Cancel', saveChanges:'Save changes',
-      close:'Close', back:'Back', avatarTooLarge:'Image is too large (max 1.5MB).'
+      close:'Close', back:'Back', avatarTooLarge:'Image is too large (max 700KB).',
+      loading:'Loading…'
+    },
+    errors:{
+      network:'Something went wrong connecting to HUM. Check your connection and try again.',
+      userNotFound:'That account could not be found.',
+      requiresRecentLogin:'Please log out and log back in, then try again.'
     },
     langScreen:{
       title:'Choose your language', subtitle:'You can change this anytime in Settings.'
@@ -232,7 +390,13 @@ const translations = {
       displayName:'Отображаемое имя', displayNamePlaceholder:'Азиза Каримова',
       bio:'О себе', bioPlaceholder:'Расскажите немного о себе',
       show:'Показать', hide:'Скрыть', cancel:'Отмена', saveChanges:'Сохранить',
-      close:'Закрыть', back:'Назад', avatarTooLarge:'Изображение слишком большое (макс. 1.5МБ).'
+      close:'Закрыть', back:'Назад', avatarTooLarge:'Изображение слишком большое (макс. 700КБ).',
+      loading:'Загрузка…'
+    },
+    errors:{
+      network:'Не удалось подключиться к HUM. Проверьте соединение и попробуйте снова.',
+      userNotFound:'Такой аккаунт не найден.',
+      requiresRecentLogin:'Выйдите из аккаунта и войдите снова, затем повторите попытку.'
     },
     langScreen:{
       title:'Выберите язык', subtitle:'Вы всегда сможете изменить его в настройках.'
@@ -309,7 +473,13 @@ const translations = {
       displayName:'Ko‘rinadigan ism', displayNamePlaceholder:'Aziza Karimova',
       bio:'Men haqimda', bioPlaceholder:'O‘zingiz haqingizda yozing',
       show:'Ko‘rsatish', hide:'Yashirish', cancel:'Bekor qilish', saveChanges:'Saqlash',
-      close:'Yopish', back:'Orqaga', avatarTooLarge:'Rasm hajmi juda katta (maks. 1.5MB).'
+      close:'Yopish', back:'Orqaga', avatarTooLarge:'Rasm hajmi juda katta (maks. 700KB).',
+      loading:'Yuklanmoqda…'
+    },
+    errors:{
+      network:'HUM bilan bog‘lanishda xatolik yuz berdi. Aloqani tekshirib, qayta urinib ko‘ring.',
+      userNotFound:'Bunday akkaunt topilmadi.',
+      requiresRecentLogin:'Hisobdan chiqib, qayta kiring va yana urinib ko‘ring.'
     },
     langScreen:{
       title:'Tilni tanlang', subtitle:'Buni istalgan vaqtda Sozlamalarda o‘zgartirishingiz mumkin.'
@@ -431,22 +601,6 @@ function applyTranslations(root = document){
 /* ===================================================================
    SECTION: UTILITIES
 =================================================================== */
-function genId(){
-  return 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
-}
-
-// Simple non-cryptographic hash used ONLY for this local prototype.
-// There is no real backend yet, so passwords never leave the browser.
-// Swap this for real server-side hashing (bcrypt/argon2) once HUM
-// gets an actual authentication API.
-function hashPassword(password){
-  let hash = 5381;
-  for(let i=0;i<password.length;i++){
-    hash = ((hash << 5) + hash) + password.charCodeAt(i);
-    hash |= 0;
-  }
-  return 'h' + Math.abs(hash).toString(36) + password.length;
-}
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
@@ -579,9 +733,12 @@ function validateRegistration({ displayName, username, password, confirmPassword
     errors.username = t('auth.validation.required');
   }else if(!USERNAME_RE.test(username.trim())){
     errors.username = t('auth.validation.usernameFormat');
-  }else if(findUserByUsername(username.trim())){
-    errors.username = t('auth.validation.usernameTaken');
   }
+  // Uniqueness is enforced by Firebase Auth itself (each username maps
+  // to a unique synthetic email) — see registerUser()'s catch below —
+  // rather than a separate pre-check here, so there's no race between
+  // "check it's free" and "claim it" on two devices registering the
+  // same name at once.
 
   if(!password){
     errors.password = t('auth.validation.required');
@@ -598,50 +755,79 @@ function validateRegistration({ displayName, username, password, confirmPassword
   return errors;
 }
 
-function registerUser({ displayName, username, password, bio, avatar }){
+async function registerUser({ displayName, username, password, bio, avatar }){
   const errors = validateRegistration({ displayName, username, password, confirmPassword: password });
   if(Object.keys(errors).length){
     return { ok:false, errors };
   }
 
+  const uname = username.trim();
+  const lower = usernameDocId(uname);
+
+  let credential;
+  try{
+    credential = await createUserWithEmailAndPassword(auth, emailForUsername(lower), password);
+  }catch(e){
+    if(e.code === 'auth/email-already-in-use'){
+      return { ok:false, errors:{ username: t('auth.validation.usernameTaken') } };
+    }
+    return { ok:false, errors:{ form: t('errors.network') } };
+  }
+
   const user = {
-    id: genId(),
-    username: username.trim(),
+    uid: credential.user.uid,
+    username: uname,
+    usernameLower: lower,
     displayName: displayName.trim(),
-    passwordHash: hashPassword(password),
+    displayNameLower: displayName.trim().toLowerCase(),
     bio: (bio || '').trim(),
     avatar: avatar || { type:'generated' },
     createdAt: new Date().toISOString()
   };
 
-  upsertUser(user);
-  setSession(user.username);
+  try{
+    await setDoc(doc(db, 'users', lower), user);
+  }catch(e){
+    return { ok:false, errors:{ form: t('errors.network') } };
+  }
+
+  state.me = user;
   return { ok:true, user };
 }
 
-function loginUser({ username, password }){
+async function loginUser({ username, password }){
   if(!username || !password){
     return { ok:false, error: t('auth.validation.required') };
   }
-  const user = findUserByUsername(username.trim());
-  if(!user || user.passwordHash !== hashPassword(password)){
+  let credential;
+  try{
+    credential = await signInWithEmailAndPassword(auth, emailForUsername(username), password);
+  }catch(e){
+    if(e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found' || e.code === 'auth/invalid-email'){
+      return { ok:false, error: t('auth.login.errorInvalid') };
+    }
+    return { ok:false, error: t('errors.network') };
+  }
+  const user = await findUserByUsername(username);
+  if(!user){
+    // Auth account exists but its Firestore profile doc doesn't (e.g.
+    // it was deleted separately) — treat it the same as invalid login
+    // rather than letting the person into a broken, profile-less app.
+    await signOut(auth).catch(() => {});
     return { ok:false, error: t('auth.login.errorInvalid') };
   }
-  setSession(user.username);
+  state.me = user;
   return { ok:true, user };
 }
 
-function logoutUser(){
-  clearSession();
+async function logoutUser(){
+  stopAllConversationWatchers();
+  await signOut(auth).catch(() => {});
+  state.me = null;
 }
 
-function currentUser(sessionUsername){
-  if(!sessionUsername) return null;
-  return findUserByUsername(sessionUsername);
-}
-
-function updateProfile(currentUsername, updates){
-  const user = findUserByUsername(currentUsername);
+async function updateProfile(updates){
+  const user = state.me;
   if(!user) return { ok:false, errors:{ form: t('auth.login.errorInvalid') } };
 
   const errors = {};
@@ -656,38 +842,99 @@ function updateProfile(currentUsername, updates){
     errors.username = t('auth.validation.required');
   }else if(!USERNAME_RE.test(nextUsername)){
     errors.username = t('auth.validation.usernameFormat');
-  }else if(nextUsername.toLowerCase() !== user.username.toLowerCase()){
-    const existing = findUserByUsername(nextUsername);
-    if(existing) errors.username = t('auth.validation.usernameTaken');
   }
 
   if(Object.keys(errors).length){
     return { ok:false, errors };
   }
 
-  const usernameChanged = nextUsername.toLowerCase() !== user.username.toLowerCase();
+  const usernameChanged = usernameDocId(nextUsername) !== usernameDocId(user.username);
+  const nextLower = usernameDocId(nextUsername);
+
+  // Changing the username means changing the Firebase Auth email it
+  // maps to, which Firebase itself rejects with auth/email-already-in-use
+  // if another account already has it — the same uniqueness check the
+  // rest of the app relies on, so there's nothing extra to pre-check
+  // here. It can also ask for a fresh login (auth/requires-recent-login)
+  // if the session is old, which is surfaced as a plain form error
+  // rather than a crash.
+  if(usernameChanged){
+    try{
+      await updateEmail(auth.currentUser, emailForUsername(nextLower));
+    }catch(e){
+      if(e.code === 'auth/email-already-in-use'){
+        return { ok:false, errors:{ username: t('auth.validation.usernameTaken') } };
+      }
+      if(e.code === 'auth/requires-recent-login'){
+        return { ok:false, errors:{ form: t('errors.requiresRecentLogin') } };
+      }
+      return { ok:false, errors:{ form: t('errors.network') } };
+    }
+  }
 
   const updatedUser = {
     ...user,
     displayName: nextDisplayName,
+    displayNameLower: nextDisplayName.toLowerCase(),
     username: nextUsername,
+    usernameLower: nextLower,
     bio: (updates.bio || '').trim(),
     avatar: updates.avatar !== undefined ? updates.avatar : user.avatar
   };
 
-  upsertUser(updatedUser);
-  if(usernameChanged) setSession(updatedUser.username);
+  try{
+    if(usernameChanged){
+      // Firestore document IDs can't be renamed in place — write the
+      // new doc, then remove the old one. Existing conversations keep
+      // referencing the old username (a known, acceptable trade-off
+      // for a prototype-simple schema): they won't disappear, but
+      // their "from"/participant records won't retroactively update to
+      // the new name.
+      await setDoc(doc(db, 'users', nextLower), updatedUser);
+      await deleteDoc(doc(db, 'users', usernameDocId(user.username)));
+    }else{
+      await setDoc(doc(db, 'users', nextLower), updatedUser);
+    }
+  }catch(e){
+    return { ok:false, errors:{ form: t('errors.network') } };
+  }
 
+  state.me = updatedUser;
   return { ok:true, user: updatedUser, usernameChanged };
 }
 
-function searchUsers(query, excludeUsername){
-  const q = (query || '').trim().toLowerCase();
-  const users = getUsers();
-  return users
-    .filter(u => u.username.toLowerCase() !== (excludeUsername || '').toLowerCase())
-    .filter(u => !q || u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
-    .sort((a,b)=> a.displayName.localeCompare(b.displayName));
+// Firestore has no built-in "contains" text search, so this does two
+// prefix ("starts with") queries — one on the lowercased username,
+// one on the lowercased display name — and merges the results. That
+// covers the common case (typing the start of someone's name or
+// @handle) without needing a separate search service. Throws on
+// network failure so callers can show a real error state instead of
+// silently showing zero results.
+async function searchUsers(searchQuery, excludeUsernameLower){
+  const q = (searchQuery || '').trim().toLowerCase();
+  const usersCol = collection(db, 'users');
+  let rows = [];
+
+  if(!q){
+    // Blank query: browse everyone, like the old "list all local
+    // users" default did, capped to a reasonable page size.
+    const snap = await getDocs(fbQuery(usersCol, orderBy('displayNameLower'), limit(40)));
+    rows = snap.docs.map(d => d.data());
+  }else{
+    const upperBound = q + '\uf8ff';
+    const [byUsername, byDisplayName] = await Promise.all([
+      getDocs(fbQuery(usersCol, orderBy('usernameLower'), where('usernameLower','>=',q), where('usernameLower','<=',upperBound), limit(20))),
+      getDocs(fbQuery(usersCol, orderBy('displayNameLower'), where('displayNameLower','>=',q), where('displayNameLower','<=',upperBound), limit(20))),
+    ]);
+    const seen = new Map();
+    [...byUsername.docs, ...byDisplayName.docs].forEach(d => seen.set(d.id, d.data()));
+    rows = Array.from(seen.values());
+  }
+
+  return rows
+    .filter(u => u.usernameLower !== (excludeUsernameLower || ''))
+    .sort((a,b)=> a.displayName.localeCompare(b.displayName))
+    .slice(0, 30);
 }
 
 /* ===================================================================
@@ -705,7 +952,15 @@ function avatarBg(user){
   return colorForUsername(user.username);
 }
 
-function renderPeopleResults(container, users, { query, selectedUsername }){
+function renderPeopleResults(container, users, { query, selectedUsername, loading, error }){
+  if(loading){
+    container.innerHTML = `<div class="people-results__hint">${escapeHtml(t('common.loading'))}</div>`;
+    return;
+  }
+  if(error){
+    container.innerHTML = `<div class="people-results__empty">${escapeHtml(t('errors.network'))}</div>`;
+    return;
+  }
   if(!users.length){
     container.innerHTML = `
       <div class="people-results__empty">${query ? escapeHtml(t('people.empty')) : escapeHtml(t('people.hint'))}</div>
@@ -752,8 +1007,8 @@ function renderProfileSummary(container, user){
     </div>
   `;
 }
-function renderChatsListRow(user, lastMessage, meUsername){
-  const isOwn = lastMessage.from.toLowerCase() === meUsername.toLowerCase();
+function renderChatsListRow(user, lastMessage, meUsernameLower){
+  const isOwn = usernameDocId(lastMessage.from) === meUsernameLower;
   const prefix = isOwn ? t('chat.youPrefix') : '';
   const previewText = (prefix + lastMessage.text).replace(/\s+/g, ' ').trim();
   return `
@@ -784,24 +1039,39 @@ function chatsEmptyStateMarkup(){
   `;
 }
 
+// The Chats panel doesn't fetch on demand — it just renders whatever
+// watchUserConversations() last delivered (state.chatsListRows /
+// state.chatsListError / state.chatsListLoading), which that live
+// listener keeps current for as long as the person is logged in. That
+// listener is what makes a message someone just received on another
+// device show up here without needing to refresh or reopen the tab.
 function renderChatsList(){
   if(!els.chatsListContainer) return;
-  const me = currentUser(state.session);
+  const me = currentUser();
   if(!me){
     els.chatsListContainer.innerHTML = '';
     return;
   }
-  const conversations = getUserConversations(me.username);
-  if(!conversations.length){
+  if(state.chatsListError){
+    els.chatsListContainer.innerHTML = `
+      <div class="people-results__empty">
+        ${escapeHtml(t('errors.network'))}
+      </div>
+    `;
+    return;
+  }
+  if(state.chatsListLoading){
+    els.chatsListContainer.innerHTML = `<div class="people-results__hint">${escapeHtml(t('common.loading'))}</div>`;
+    return;
+  }
+  const rows = state.chatsListRows || [];
+  if(!rows.length){
     els.chatsListContainer.innerHTML = chatsEmptyStateMarkup();
     return;
   }
-  els.chatsListContainer.innerHTML = conversations
-    .map(({ otherUsername, lastMessage }) => {
-      const user = findUserByUsername(otherUsername);
-      if(!user) return '';
-      return renderChatsListRow(user, lastMessage, me.username);
-    })
+  const meLower = usernameDocId(me.username);
+  els.chatsListContainer.innerHTML = rows
+    .map(({ other, lastMessage }) => renderChatsListRow(other, lastMessage, meLower))
     .join('');
 }
 
@@ -813,21 +1083,36 @@ function renderChatHeader(user){
   els.chatHeaderHandle.textContent = '@' + user.username;
 }
 
+// Like renderChatsList(), this renders from whatever the currently
+// open chat's live listener (watchConversationMessages, wired in
+// openChat()) last delivered — state.chatMessagesData /
+// state.chatMessagesError / state.chatMessagesLoading — rather than
+// fetching on its own, so a reply that arrives from the other person's
+// device appears immediately.
 function renderChatMessages(){
   if(!els.chatMessages) return;
-  const me = currentUser(state.session);
+  const me = currentUser();
   if(!me || !state.activeChatUsername){
     els.chatMessages.innerHTML = '';
     return;
   }
-  const messages = getConversationMessages(conversationId(me.username, state.activeChatUsername));
+  if(state.chatMessagesError){
+    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('errors.network'))}</div>`;
+    return;
+  }
+  if(state.chatMessagesLoading){
+    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('common.loading'))}</div>`;
+    return;
+  }
+  const messages = state.chatMessagesData || [];
   if(!messages.length){
     els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('chat.emptyTitle'))}</div>`;
     return;
   }
+  const meLower = usernameDocId(me.username);
   els.chatMessages.innerHTML = messages
     .map((m) => {
-      const isOwn = m.from.toLowerCase() === me.username.toLowerCase();
+      const isOwn = usernameDocId(m.from) === meLower;
       return `
         <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}">
           <div class="chat-msg__bubble">${escapeHtml(m.text)}</div>
@@ -899,14 +1184,74 @@ const els = {
 };
 
 let state = {
-  session: getSession(),
+  me: null, // resolved Firestore profile of the signed-in user (see onAuthReady)
+  authReady: false,
   activePanelView: "chats",
   mainView: "welcome",
   viewingUsername: null,
   activeChatUsername: null,
   registerAvatar: { type: "generated" },
   profileEditAvatar: { type: "generated" },
+
+  // People Search: guards against an in-flight search's results
+  // rendering after a newer one already started (typing fast, or a
+  // slow network reply arriving late).
+  peopleSearchToken: 0,
+  peopleSearchLoading: false,
+  peopleSearchError: false,
+
+  // Chats list: kept in sync by watchUserConversations() for as long
+  // as someone is logged in (see startConversationsWatcher/
+  // stopAllConversationWatchers).
+  chatsListRows: [],
+  chatsListLoading: true,
+  chatsListError: false,
+  unsubChatsList: null,
+
+  // Open chat's messages: kept in sync by watchConversationMessages()
+  // for whichever conversation is currently open (see openChat).
+  chatMessagesData: [],
+  chatMessagesLoading: true,
+  chatMessagesError: false,
+  unsubChatMessages: null,
 };
+
+// Stops any live Firestore listeners this device has open — called on
+// logout and when otherwise tearing down the signed-in session, so a
+// listener never keeps delivering updates (or errors) for an account
+// that's no longer signed in.
+function stopAllConversationWatchers(){
+  if(state.unsubChatsList){ state.unsubChatsList(); state.unsubChatsList = null; }
+  if(state.unsubChatMessages){ state.unsubChatMessages(); state.unsubChatMessages = null; }
+  state.chatsListRows = [];
+  state.chatsListLoading = true;
+  state.chatsListError = false;
+  state.chatMessagesData = [];
+  state.chatMessagesLoading = true;
+  state.chatMessagesError = false;
+}
+
+// Starts (or restarts) the live "who am I talking to, and what did
+// they last say" listener for the signed-in user. Safe to call more
+// than once — it always tears down any previous listener first.
+function startConversationsWatcher(){
+  if(state.unsubChatsList) state.unsubChatsList();
+  const me = currentUser();
+  if(!me) return;
+  state.chatsListLoading = true;
+  state.chatsListError = false;
+  if(state.activePanelView === "chats") renderChatsList();
+  state.unsubChatsList = watchUserConversations(me.username, (rows, err) => {
+    state.chatsListLoading = false;
+    if(err){
+      state.chatsListError = true;
+    }else{
+      state.chatsListError = false;
+      state.chatsListRows = rows;
+    }
+    if(state.activePanelView === "chats") renderChatsList();
+  });
+}
 
 /* ================= THEME ================= */
 function applyTheme(theme) {
@@ -951,8 +1296,8 @@ function wireLangControls() {
 
 function refreshDynamicText() {
   // Re-render any dynamically built content so it reflects the new language.
-  if (state.session) {
-    const me = currentUser(state.session);
+  if (state.me) {
+    const me = currentUser();
     if (me && state.mainView === "settings")
       updateSettingsAccountHint(me.username);
     if (state.mainView === "profileView" && state.viewingUsername) {
@@ -1023,10 +1368,16 @@ function paintAvatarPreview(el, avatarState, displayName, username) {
   });
 }
 
+// Firestore caps a single document at 1MiB, and base64-encoding an
+// image inflates its size by about a third — so a raw file has to stay
+// well under that limit for the encoded avatar plus the rest of the
+// user doc's fields to fit. 700KB raw leaves comfortable headroom.
+const AVATAR_MAX_BYTES = 700 * 1024;
+
 registerAvatarInput.addEventListener("change", async () => {
   const file = registerAvatarInput.files[0];
   if (!file) return;
-  if (file.size > 1.5 * 1024 * 1024) {
+  if (file.size > AVATAR_MAX_BYTES) {
     showToast(t("common.avatarTooLarge"), "error");
     registerAvatarInput.value = "";
     return;
@@ -1063,8 +1414,13 @@ registerAvatarClear.addEventListener("click", () => {
   });
 });
 
+function setFormBusy(form, busy){
+  const btn = form.querySelector('button[type="submit"]');
+  if(btn) btn.disabled = busy;
+}
+
 /* ================= LOGIN SUBMIT ================= */
-els.loginForm.addEventListener("submit", (e) => {
+els.loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   clearErrors(["loginUsername", "loginPassword", "loginForm"]);
   const username = document.getElementById("loginUsername").value;
@@ -1078,7 +1434,9 @@ els.loginForm.addEventListener("submit", (e) => {
   }
   if (!username.trim() || !password) return;
 
-  const result = loginUser({ username, password });
+  setFormBusy(els.loginForm, true);
+  const result = await loginUser({ username, password });
+  setFormBusy(els.loginForm, false);
   if (!result.ok) {
     setFieldError("loginForm", result.error);
     return;
@@ -1091,7 +1449,7 @@ els.loginForm.addEventListener("submit", (e) => {
 });
 
 /* ================= REGISTER SUBMIT ================= */
-els.registerForm.addEventListener("submit", (e) => {
+els.registerForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const ids = [
     "registerDisplayName",
@@ -1111,7 +1469,9 @@ els.registerForm.addEventListener("submit", (e) => {
     avatar: state.registerAvatar,
   };
 
-  const result = registerUser(data);
+  setFormBusy(els.registerForm, true);
+  const result = await registerUser(data);
+  setFormBusy(els.registerForm, false);
   if (!result.ok) {
     Object.keys(result.errors).forEach((field) =>
       setFieldError("register" + capitalize(field), result.errors[field]),
@@ -1133,14 +1493,14 @@ function capitalize(str) {
 
 /* ================= AUTH SUCCESS / LOGOUT ================= */
 function onAuthSuccess(user, toastMsg) {
-  state.session = user.username;
+  state.me = user;
   showToast(toastMsg, "success");
   enterApp();
+  startConversationsWatcher();
 }
 
-function doLogout() {
-  logoutUser();
-  state.session = null;
+async function doLogout() {
+  await logoutUser();
   state.mainView = "welcome";
   state.activePanelView = "chats";
   state.viewingUsername = null;
@@ -1263,14 +1623,37 @@ els.panelMain.prepend(backBtn);
 backBtn.addEventListener("click", closeMobileDetail);
 
 /* ================= PEOPLE SEARCH ================= */
-function runPeopleSearch() {
+// Guarded with peopleSearchToken so that if the person types quickly
+// (or a slow network reply arrives late), only the *latest* search's
+// results ever get rendered — an older in-flight request finishing
+// after a newer one can't clobber the screen with stale results.
+async function runPeopleSearch() {
   const query = els.peopleSearchInput.value;
-  const me = currentUser(state.session);
-  const results = searchUsers(query, me ? me.username : null);
-  renderPeopleResults(els.peopleResults, results, {
+  const me = currentUser();
+  const myToken = ++state.peopleSearchToken;
+
+  renderPeopleResults(els.peopleResults, [], {
     query,
     selectedUsername: state.viewingUsername,
+    loading: true,
   });
+
+  try {
+    const results = await searchUsers(query, me ? usernameDocId(me.username) : null);
+    if (myToken !== state.peopleSearchToken) return;
+    renderPeopleResults(els.peopleResults, results, {
+      query,
+      selectedUsername: state.viewingUsername,
+    });
+  } catch (e) {
+    console.error("HUM: people search failed", e);
+    if (myToken !== state.peopleSearchToken) return;
+    renderPeopleResults(els.peopleResults, [], {
+      query,
+      selectedUsername: state.viewingUsername,
+      error: true,
+    });
+  }
 }
 els.peopleSearchInput.addEventListener("input", debounce(runPeopleSearch, 150));
 
@@ -1281,15 +1664,25 @@ els.peopleResults.addEventListener("click", (e) => {
   openProfileView(username, true);
 });
 
-function openProfileView(username, navigate) {
-  const me = currentUser(state.session);
-  if (me && username.toLowerCase() === me.username.toLowerCase()) {
+async function openProfileView(username, navigate) {
+  const me = currentUser();
+  if (me && usernameDocId(username) === usernameDocId(me.username)) {
     openOwnProfile();
     if (navigate) openMobileDetail();
     return;
   }
-  const user = findUserByUsername(username);
-  if (!user) return;
+  let user;
+  try {
+    user = await findUserByUsername(username);
+  } catch (e) {
+    console.error("HUM: failed to load profile", e);
+    showToast(t("errors.network"), "error");
+    return;
+  }
+  if (!user) {
+    showToast(t("errors.userNotFound"), "error");
+    return;
+  }
   state.viewingUsername = user.username;
   renderProfileHero(els.mainProfileView, user, false);
   setMainView("profileView");
@@ -1307,20 +1700,54 @@ els.mainProfileView.addEventListener("click", (e) => {
   openChat(state.viewingUsername, true);
 });
 
-function openChat(username, navigate) {
-  const me = currentUser(state.session);
+async function openChat(username, navigate) {
+  const me = currentUser();
   if (!me) return;
-  const other = findUserByUsername(username);
-  if (!other) return;
+  let other;
+  try {
+    other = await findUserByUsername(username);
+  } catch (e) {
+    console.error("HUM: failed to open chat", e);
+    showToast(t("errors.network"), "error");
+    return;
+  }
+  if (!other) {
+    showToast(t("errors.userNotFound"), "error");
+    return;
+  }
+
   state.activeChatUsername = other.username;
   renderChatHeader(other);
-  renderChatMessages();
   setMainView("chat");
   if (navigate) openMobileDetail();
   // Clear any leftover draft from a previously open conversation so text
   // typed for one person never leaks into a different person's chat.
   if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
+
+  // Swap in a live listener for this conversation's messages — this is
+  // what makes a message the other person sends from their own device
+  // appear here without needing to reopen the chat or refresh.
+  if (state.unsubChatMessages) state.unsubChatMessages();
+  state.chatMessagesData = [];
+  state.chatMessagesLoading = true;
+  state.chatMessagesError = false;
+  renderChatMessages();
+  const watchedUsername = other.username;
+  state.unsubChatMessages = watchConversationMessages(me.username, other.username, (messages, err) => {
+    state.chatMessagesLoading = false;
+    if (err) {
+      state.chatMessagesError = true;
+    } else {
+      state.chatMessagesError = false;
+      state.chatMessagesData = messages;
+    }
+    // Guards against a listener callback for a chat the person has
+    // since navigated away from landing on the wrong screen.
+    if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(watchedUsername)) {
+      renderChatMessages();
+    }
+  });
 }
 
 // Clicking the chat header jumps back to that person's profile — a
@@ -1348,16 +1775,33 @@ function autoSizeChatInput() {
   el.classList.toggle("is-scrollable", el.scrollHeight > CHAT_INPUT_MAX_HEIGHT);
 }
 
-function sendChatMessage() {
-  const me = currentUser(state.session);
+async function sendChatMessage() {
+  const me = currentUser();
   if (!me || !state.activeChatUsername) return;
   const text = els.chatInput.value.trim();
   if (!text) return;
-  addMessage(me.username, state.activeChatUsername, me.username, text);
+  const otherUsername = state.activeChatUsername;
+
+  // Optimistic clear: the composer empties immediately on submit (real
+  // messenger feel) rather than waiting on the network round trip. The
+  // live message listener from openChat() will render the sent message
+  // once Firestore confirms it — including on the sender's own screen,
+  // so there's no separate "add it locally too" step to keep in sync.
   els.chatInput.value = "";
   autoSizeChatInput();
-  renderChatMessages();
-  if (state.activePanelView === "chats") renderChatsList();
+
+  let other;
+  try {
+    other = await findUserByUsername(otherUsername);
+    if (!other) throw new Error("recipient not found");
+    await addMessage(me, other, text);
+  } catch (e) {
+    console.error("HUM: failed to send message", e);
+    showToast(t("errors.network"), "error");
+    // Restore the draft so the person doesn't lose what they typed.
+    els.chatInput.value = text;
+    autoSizeChatInput();
+  }
 }
 
 els.chatComposerForm.addEventListener("submit", (e) => {
@@ -1375,7 +1819,7 @@ els.chatInput.addEventListener("keydown", (e) => {
 
 /* ================= OWN PROFILE ================= */
 function openOwnProfile() {
-  const me = currentUser(state.session);
+  const me = currentUser();
   if (!me) return;
   state.viewingUsername = me.username;
   els.profileForm.hidden = true;
@@ -1392,7 +1836,7 @@ els.navProfile.addEventListener("click", () => {
 });
 
 els.profileEditToggle.addEventListener("click", () => {
-  const me = currentUser(state.session);
+  const me = currentUser();
   if (!me) return;
   const isEditing = !els.profileForm.hidden;
   if (isEditing) {
@@ -1430,7 +1874,7 @@ function populateProfileForm(user) {
 els.profileAvatarInput.addEventListener("change", async () => {
   const file = els.profileAvatarInput.files[0];
   if (!file) return;
-  if (file.size > 1.5 * 1024 * 1024) {
+  if (file.size > AVATAR_MAX_BYTES) {
     showToast(t("common.avatarTooLarge"), "error");
     els.profileAvatarInput.value = "";
     return;
@@ -1455,10 +1899,10 @@ els.profileAvatarClear.addEventListener("click", () => {
   );
 });
 
-els.profileForm.addEventListener("submit", (e) => {
+els.profileForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   clearErrors(["profileDisplayName", "profileUsername", "profileForm"]);
-  const me = currentUser(state.session);
+  const me = currentUser();
   if (!me) return;
 
   const updates = {
@@ -1468,7 +1912,9 @@ els.profileForm.addEventListener("submit", (e) => {
     avatar: state.profileEditAvatar,
   };
 
-  const result = updateProfile(me.username, updates);
+  setFormBusy(els.profileForm, true);
+  const result = await updateProfile(updates);
+  setFormBusy(els.profileForm, false);
   if (!result.ok) {
     Object.keys(result.errors).forEach((field) => {
       if (field === "form") setFieldError("profileForm", result.errors.form);
@@ -1477,13 +1923,21 @@ els.profileForm.addEventListener("submit", (e) => {
     return;
   }
 
-  state.session = result.user.username;
   updateSettingsAccountHint(result.user.username);
   els.profileForm.hidden = true;
   els.profileSummary.hidden = false;
   els.profileEditToggle.hidden = false;
   renderProfileSummary(els.profileSummary, result.user);
   showToast(t("toast.profileSaved"), "success");
+  if (result.usernameChanged) {
+    // The username used to key both the Chats-list watcher and the
+    // active conversation, so a rename means both need to restart
+    // against the new username.
+    startConversationsWatcher();
+    if (state.mainView === "chat" && state.activeChatUsername) {
+      state.viewingUsername = result.user.username;
+    }
+  }
 });
 
 /* ================= SETTINGS ================= */
@@ -1496,7 +1950,7 @@ function updateSettingsAccountHint(username) {
 }
 
 function openSettings() {
-  const me = currentUser(state.session);
+  const me = currentUser();
   if (me) updateSettingsAccountHint(me.username);
   setMainView("settings");
 }
@@ -1512,7 +1966,7 @@ function enterApp() {
   setPanelView("chats");
   setMainView("welcome");
   closeMobileDetail();
-  const me = currentUser(state.session);
+  const me = currentUser();
   if (me) updateSettingsAccountHint(me.username);
 }
 
@@ -1552,22 +2006,65 @@ function init() {
   }
   els.langScreen.hidden = true;
 
-  if (state.session && currentUser(state.session)) {
-    enterApp();
-  } else {
-    state.session = null;
-    els.authScreen.hidden = false;
-    els.appShell.hidden = true;
-  }
+  // Both screens stay hidden for the brief moment until Firebase
+  // resolves whether this device already has a signed-in session (see
+  // the onAuthStateChanged listener below) — that check is inherently
+  // asynchronous now that the session lives in Firebase Auth instead
+  // of a plain localStorage flag that used to be readable synchronously.
+  els.authScreen.hidden = true;
+  els.appShell.hidden = true;
 }
 
-// This <script> tag sits at the very end of <body>, so by the time this
-// file runs, every element above it is already parsed into the DOM.
-// There's no need to wait for a "DOMContentLoaded" listener here — that
-// pattern is redundant at best when the script is already at the bottom
-// of the page, and it can be actively broken in some page-load paths (for
-// example if the HTML is injected via document.write/innerHTML after the
-// event has already fired): the listener callback would then silently
-// never run, leaving every button on the page dead with no console error.
-// Calling init() directly avoids that failure mode entirely.
+// Fires once Firebase resolves whether this device has a persisted
+// signed-in session (shortly after page load), and again any time
+// sign-in state actually changes. This is the async replacement for
+// the old synchronous getSession() localStorage read: it's what
+// decides, on every load, whether to show the auth screen or go
+// straight into the app with the right profile already loaded.
+onAuthStateChanged(auth, async (firebaseUser) => {
+  if (!hasStoredLang()) return; // still on the language screen
+
+  if (!firebaseUser) {
+    stopAllConversationWatchers();
+    state.me = null;
+    els.appShell.hidden = true;
+    els.authScreen.hidden = false;
+    if (state.authReady) showAuthTab("login"); // a real sign-out, not just the first load
+    state.authReady = true;
+    return;
+  }
+
+  const usernameLower = firebaseUser.email.split("@")[0];
+  // onAuthSuccess() (called right after a successful login/register)
+  // already set state.me and entered the app immediately for instant
+  // feedback — this listener firing right afterwards for the same user
+  // is expected and harmless, just skip redoing the same work twice.
+  if (state.authReady && state.me && usernameDocId(state.me.username) === usernameLower) {
+    return;
+  }
+
+  try {
+    const user = await findUserByUsername(usernameLower);
+    if (!user) throw new Error("profile document missing for signed-in account");
+    state.me = user;
+    state.authReady = true;
+    enterApp();
+    startConversationsWatcher();
+  } catch (e) {
+    console.error("HUM: failed to load profile for existing session", e);
+    state.authReady = true;
+    state.me = null;
+    els.appShell.hidden = true;
+    els.authScreen.hidden = false;
+    showAuthTab("login");
+    setFieldError("loginForm", t("errors.network"));
+  }
+});
+
+// This <script> tag is an ES module, so it's deferred automatically —
+// the DOM is already fully parsed by the time this runs, same
+// guarantee the old plain <script> at the end of <body> had. Calling
+// init() directly (no DOMContentLoaded listener needed) avoids the
+// failure mode where that event has already fired before a listener
+// for it gets attached.
 init();
