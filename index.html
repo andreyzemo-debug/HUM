@@ -76,6 +76,49 @@
       </div>
     </main>
 
+    <!-- ============ FIREBASE CONFIG ERROR (shown only if FIREBASE_CONFIG
+         in app.js still has placeholder/invalid values — see the
+         validateFirebaseConfig() check near the top of that file) ============ -->
+    <main id="firebaseConfigError" class="lang-screen" hidden>
+      <div class="lang-screen__card lang-screen__card--left config-error">
+        <div class="brand-mark">
+          <svg viewBox="0 0 40 40" class="brand-mark__glyph">
+            <path
+              d="M4 20c2.5-9 4 9 6.5 0s4-13 6.5 0 4 13 6.5 0 4-9 6.5 0 4 9 6.5 0"
+            />
+          </svg>
+          <span class="brand-mark__word">HUM</span>
+        </div>
+        <h1 class="lang-screen__title">Firebase setup needed</h1>
+        <p class="lang-screen__subtitle">
+          HUM's account and message storage runs on your own Firebase
+          project, and it isn't configured yet:
+        </p>
+        <p class="config-error__detail" id="firebaseConfigErrorDetail"></p>
+        <p class="lang-screen__subtitle" style="margin-bottom: 10px">
+          To fix this:
+        </p>
+        <ol class="config-error__steps">
+          <li>Open <code>app.js</code> in this project.</li>
+          <li>
+            Find the <code>FIREBASE_CONFIG</code> object near the top of the
+            file.
+          </li>
+          <li>
+            Replace every placeholder value with your real Firebase
+            project's config — Firebase console → Project settings →
+            General → "Your apps".
+          </li>
+          <li>Save the file and reload this page.</li>
+        </ol>
+        <p class="lang-screen__subtitle" style="margin-bottom: 0">
+          Full step-by-step setup (creating the project, enabling
+          Authentication, creating Firestore, security rules) is in the
+          comment block at the very top of <code>app.js</code>.
+        </p>
+      </div>
+    </main>
+
     <!-- ============ AUTH SCREEN ============ -->
     <main id="authScreen" class="auth-screen" hidden>
       <section class="auth-showcase">

@@ -42,35 +42,71 @@
 //   4. Project settings → General → "Your apps" → add a Web app →
 //      copy the firebaseConfig object it gives you into
 //      FIREBASE_CONFIG right below this comment.
-//   5. Firestore → Rules, paste:
+//   5. Firestore → Rules, paste EXACTLY this (this must be pasted and
+//      published in the Firebase console — nothing in this file can
+//      apply it for you, and "Missing or insufficient permissions" on
+//      any read/write/listener means these rules aren't live yet, or
+//      don't match what's below):
 //        rules_version = '2';
 //        service cloud.firestore {
 //          match /databases/{database}/documents {
-//            match /users/{userId} {
+//
+//            match /users/{uid} {
 //              allow read: if true;
 //              allow create: if request.auth != null
+//                && request.auth.uid == uid
 //                && request.auth.uid == request.resource.data.uid;
 //              allow update: if request.auth != null
-//                && request.auth.uid == resource.data.uid;
+//                && request.auth.uid == uid;
 //              allow delete: if false;
 //            }
+//
 //            match /conversations/{convId} {
-//              allow read, write: if request.auth != null;
+//              // `participants` is an array of the two members' Firebase
+//              // Auth UIDs (see conversationId/ensureConversation in
+//              // app.js) — so request.auth.uid is checked directly
+//              // against it, no indirection through any other document.
+//              // The `|| !exists(...)` branch matters: ensureConversation()
+//              // does a getDoc() to check whether a conversation already
+//              // exists BEFORE creating it, and Firestore evaluates
+//              // security rules even for a read of a document that
+//              // doesn't exist yet — without this branch that check
+//              // itself would fail as a permission error instead of
+//              // just resolving to "not found".
+//              allow read: if request.auth != null
+//                && (!exists(/databases/$(database)/documents/conversations/$(convId))
+//                    || request.auth.uid in resource.data.participants);
+//              allow create: if request.auth != null
+//                && request.auth.uid in request.resource.data.participants;
+//              allow update: if request.auth != null
+//                && request.auth.uid in resource.data.participants;
+//              allow delete: if false;
+//
 //              match /messages/{msgId} {
-//                allow read, create: if request.auth != null;
+//                // Same direct check, just against the PARENT
+//                // conversation's participants (individual message docs
+//                // don't carry the participants list themselves).
+//                allow read, create: if request.auth != null
+//                  && exists(/databases/$(database)/documents/conversations/$(convId))
+//                  && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participants;
 //                allow update, delete: if false;
 //              }
 //            }
 //          }
 //        }
-//      (Profiles are readable by anyone signed in or not, which is
-//      what lets People Search work — but only the profile's own
-//      owner, proven by their Firebase Auth uid, can create/edit it.
-//      Conversations/messages require being signed in. Locking
-//      conversation access down to only its two participants needs
-//      mapping each request.auth.uid to a username inside the rules,
-//      which Firestore rules can do via get() — a reasonable next
-//      hardening step once you're past the prototype stage.)
+//      (Every profile document's ID *is* the owning account's Firebase
+//      Auth uid — allow create/update: if request.auth.uid == uid is a
+//      direct, structural "only you can write your own profile" check.
+//      Profiles are still readable by anyone signed in or not, which is
+//      what lets People Search work. Conversations and messages are
+//      readable/writable ONLY by their two participants, and — unlike an
+//      earlier version of this schema — that's now checked by comparing
+//      request.auth.uid straight against the `participants` array with
+//      no cross-document lookup involved, because `participants` (and
+//      each message's `from`) now store UIDs rather than usernames.
+//      Username stays a profile/search field only, never the security
+//      identity — see usernameLower on the users/{uid} doc, used solely
+//      by findUserByUsername()/searchUsers() for People Search.)
 // ===================================================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
@@ -105,22 +141,89 @@ import {
 // to the same shared project — that's what makes accounts and messages
 // cross-device instead of stuck in one browser.
 const FIREBASE_CONFIG = {
-  apiKey: "YOUR_FIREBASE_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyBv1B4Cuu3vXTr0pCQN9m1Z0URDr4zbpps",
+  authDomain: "humuz-57e4d.firebaseapp.com",
+  projectId: "humuz-57e4d",
+  storageBucket: "humuz-57e4d.firebasestorage.app",
+  messagingSenderId: "531135285257",
+  appId: "1:531135285257:web:d6ff1c6bc799c5745fd0d8",
+  measurementId: "G-5TVDTGLZND",
 };
 
+// A placeholder or malformed value anywhere in FIREBASE_CONFIG is
+// exactly what produces the classic symptom of running this file
+// unmodified: repeated "identitytoolkit.googleapis.com ... 400"
+// errors in the console — the SDK dutifully sending real network
+// requests built from credentials that were never real to begin with
+// — often alongside a secondary "heartbeats undefined" error. That
+// second one isn't an independent bug; it's the SDK's own internal
+// usage-ping mechanism riding along on the same doomed request. Both
+// stop appearing once real project values are here.
+//
+// This check exists so that instead of a wall of confusing repeated
+// network errors, misconfiguration produces ONE clear, loud, on-screen
+// message (see the #firebaseConfigError screen in index.html) and every
+// Firebase call is skipped until it's fixed — nothing here is silently
+// swallowed, it's surfaced once, clearly, at the source.
+function validateFirebaseConfig(config){
+  const required = ["apiKey","authDomain","projectId","storageBucket","messagingSenderId","appId"];
+  for(const key of required){
+    const value = config[key];
+    if(!value || typeof value !== "string" || !value.trim()){
+      return `FIREBASE_CONFIG.${key} is missing.`;
+    }
+    if(/YOUR_[A-Z0-9_]+/.test(value)){
+      return `FIREBASE_CONFIG.${key} is still the placeholder value ("${value}") — replace it with your real Firebase project's value.`;
+    }
+  }
+  if(!/^AIza[0-9A-Za-z_-]{20,}$/.test(config.apiKey)){
+    return `FIREBASE_CONFIG.apiKey ("${config.apiKey}") doesn't look like a real Firebase Web API key — they normally start with "AIza". Double-check you copied it from Project settings → General → "Your apps" in the Firebase console (not a server/admin key from somewhere else).`;
+  }
+  if(!config.authDomain.includes(".")){
+    return `FIREBASE_CONFIG.authDomain ("${config.authDomain}") doesn't look like a valid domain — expected something like "your-project.firebaseapp.com".`;
+  }
+  if(!/^\d+$/.test(config.messagingSenderId)){
+    return `FIREBASE_CONFIG.messagingSenderId ("${config.messagingSenderId}") should be all digits — double-check you copied the right value from the Firebase console.`;
+  }
+  return null;
+}
+
+const FIREBASE_CONFIG_ERROR = validateFirebaseConfig(FIREBASE_CONFIG);
+if(FIREBASE_CONFIG_ERROR){
+  // Deliberately not suppressed: this is the one clear diagnostic that
+  // replaces what would otherwise be a wall of repeated 400s.
+  console.error("[HUM] Firebase is not configured:", FIREBASE_CONFIG_ERROR);
+}
+
+// Called first thing inside every function that actually talks to
+// Firebase (Auth or Firestore). The UI already can't reach any of
+// these while FIREBASE_CONFIG_ERROR is set — init() shows the
+// dedicated setup screen instead of the auth/app screens — this is a
+// second layer of defense so a bad config can never result in a real
+// network call, from any code path, now or after future changes.
+function requireFirebaseConfig(){
+  if(FIREBASE_CONFIG_ERROR){
+    throw new Error("Firebase is not configured: " + FIREBASE_CONFIG_ERROR);
+  }
+}
+
+// initializeApp/getAuth/getFirestore only set up local SDK state — they
+// don't touch the network by themselves, so it's safe to call them even
+// while FIREBASE_CONFIG_ERROR is set (the rest of the app needs `auth`
+// and `db` to exist either way). What's gated below is everything that
+// actually reaches Firebase's servers.
 const firebaseApp = initializeApp(FIREBASE_CONFIG);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
-// Keeps the signed-in session across page reloads/tabs on this device
-// (Firebase's own equivalent of the old hum_session localStorage key —
-// see onAuthReady() further down, which is what now decides whether to
-// show the auth screen or go straight into the app on load).
-setPersistence(auth, browserLocalPersistence).catch(() => {});
+
+if(!FIREBASE_CONFIG_ERROR){
+  // Keeps the signed-in session across page reloads/tabs on this device
+  // (Firebase's own equivalent of the old hum_session localStorage key —
+  // see the onAuthStateChanged listener further down, which is what now
+  // decides whether to show the auth screen or go straight into the app
+  // on load).
+  setPersistence(auth, browserLocalPersistence).catch(() => {});
+}
 
 // HUM's UI is username/password, but Firebase Authentication is built
 // around email/password. Rather than adding a whole second identity
@@ -169,19 +272,95 @@ function hasStoredLang(){
 
 /* ===================================================================
    SECTION: USERS (Firestore)
-   Each user's document lives at users/{usernameLower} — using the
-   lowercased username as the document ID is what makes usernames
-   unique and lookups a single direct read instead of a search query.
+   Each user's document lives at users/{uid} — the Firebase Auth UID
+   is the permanent account identity, since (unlike username) it never
+   changes and is never reused. Username is still unique (enforced via
+   Firebase Auth's synthetic per-username email — see emailForUsername)
+   and still how people search for and look up other users, but it's
+   just a field on the document now, not the document's address. This
+   is what makes a username change a plain field update instead of a
+   delete-and-recreate of the whole document — and what makes "the Auth
+   account exists but its profile can't be found" structurally
+   impossible for a normal signed-in session, since loading your own
+   profile never has to guess your current username at all.
 =================================================================== */
 
 function usernameDocId(username){
   return String(username || '').trim().toLowerCase();
 }
 
+// Loads a profile directly by its document ID (the Auth UID) — this is
+// how the signed-in user's OWN profile is loaded (see loadOrRecoverProfile
+// and the onAuthStateChanged handler at the bottom of this file), since
+// their UID is already known the moment Firebase confirms they're
+// signed in, with no need to go via username at all.
+async function findUserByUid(uid){
+  if(!uid) return null;
+  requireFirebaseConfig();
+  const snap = await getDoc(doc(db, 'users', uid));
+  return snap.exists() ? snap.data() : null;
+}
+
+// Looks up someone else's profile by username — used for People
+// Search results, viewing a profile, and opening a chat. Since the
+// document ID is the UID (not the username), this runs as an indexed
+// equality query on the usernameLower field rather than a direct
+// document read; still a single, cheap, auto-indexed lookup.
 async function findUserByUsername(username){
   if(!username) return null;
-  const snap = await getDoc(doc(db, 'users', usernameDocId(username)));
-  return snap.exists() ? snap.data() : null;
+  requireFirebaseConfig();
+  const lower = usernameDocId(username);
+  const snap = await getDocs(fbQuery(collection(db, 'users'), where('usernameLower', '==', lower), limit(1)));
+  return snap.empty ? null : snap.docs[0].data();
+}
+
+// Resolves the signed-in Firebase user's Firestore profile by UID, and
+// recovers gracefully if it can't find one — this is the fix for "Auth
+// account exists but its Firestore profile is missing":
+//   1. Normal case: users/{uid} exists — just return it.
+//   2. Migration case: an older profile exists under the *username* as
+//      its document ID (from before profiles were keyed by UID). It
+//      gets copied onto users/{uid} (tagged with the UID) and the old
+//      doc is removed, so this only ever has to happen once per
+//      account.
+//   3. Last resort: no profile exists anywhere — e.g. a registration
+//      that created the Auth account but failed to write its Firestore
+//      document (a network blip, rejected security rule, etc). Rather
+//      than leaving that account permanently locked out, a minimal
+//      profile is reconstructed from what the Auth account itself
+//      knows (its username-shaped email) and saved as the real profile
+//      going forward.
+async function loadOrRecoverProfile(firebaseUser){
+  requireFirebaseConfig();
+
+  const byUid = await findUserByUid(firebaseUser.uid);
+  if(byUid) return byUid;
+
+  const usernameLower = firebaseUser.email.split('@')[0];
+
+  const legacyRef = doc(db, 'users', usernameLower);
+  const legacySnap = await getDoc(legacyRef);
+  if(legacySnap.exists()){
+    const migrated = { ...legacySnap.data(), uid: firebaseUser.uid };
+    await setDoc(doc(db, 'users', firebaseUser.uid), migrated);
+    if(usernameLower !== firebaseUser.uid){
+      await deleteDoc(legacyRef).catch(() => {});
+    }
+    return migrated;
+  }
+
+  const recovered = {
+    uid: firebaseUser.uid,
+    username: usernameLower,
+    usernameLower,
+    displayName: usernameLower,
+    displayNameLower: usernameLower,
+    bio: '',
+    avatar: { type: 'generated' },
+    createdAt: new Date().toISOString(),
+  };
+  await setDoc(doc(db, 'users', firebaseUser.uid), recovered);
+  return recovered;
 }
 
 // The signed-in user's own profile, kept resolved in memory the whole
@@ -195,17 +374,26 @@ function currentUser(){
 }
 
 /* ---------------- Messages / Conversations (Firestore) ----------------
-   conversations/{conversationId} holds the two participants (as
-   lowercased usernames) plus a denormalized copy of their display
-   info and the last message, so the Chats list can render without an
-   extra lookup per row. conversationId is a stable, order-independent
-   key for a pair of users, so "A messages B" and "B messages A" always
+   conversations/{conversationId} holds the two participants as their
+   Firebase Auth UIDs — not usernames — plus a denormalized copy of
+   their display info and the last message, so the Chats list can
+   render without an extra lookup per row. Using UID here (instead of
+   the earlier username-based scheme) is what makes the security rule
+   for "am I allowed to read this" a direct, zero-indirection check —
+   request.auth.uid in resource.data.participants — with no need to
+   bridge through a separate lookup of "whose account is this" inside
+   the rule itself. conversationId is a stable, order-independent key
+   for a pair of accounts, so "A messages B" and "B messages A" always
    resolve to the same conversation, and a conversation between A and C
    never touches it. Actual messages live in the
-   conversations/{id}/messages subcollection. */
+   conversations/{id}/messages subcollection, and each message's `from`
+   is likewise a UID, not a username.
+   participantsInfo/conversationInfo still carry username/displayName/
+   avatar — that's just display data for rendering the Chats list and
+   chat header, not a security identity. */
 
-function conversationId(usernameA, usernameB){
-  return [usernameDocId(usernameA), usernameDocId(usernameB)].sort().join('__');
+function conversationId(uidA, uidB){
+  return [uidA, uidB].sort().join('__');
 }
 
 function conversationInfo(user){
@@ -213,15 +401,16 @@ function conversationInfo(user){
 }
 
 async function ensureConversation(meUser, otherUser){
-  const convId = conversationId(meUser.username, otherUser.username);
+  requireFirebaseConfig();
+  const convId = conversationId(meUser.uid, otherUser.uid);
   const ref = doc(db, 'conversations', convId);
   const snap = await getDoc(ref);
   if(!snap.exists()){
     await setDoc(ref, {
-      participants: [usernameDocId(meUser.username), usernameDocId(otherUser.username)],
+      participants: [meUser.uid, otherUser.uid],
       participantsInfo: {
-        [usernameDocId(meUser.username)]: conversationInfo(meUser),
-        [usernameDocId(otherUser.username)]: conversationInfo(otherUser),
+        [meUser.uid]: conversationInfo(meUser),
+        [otherUser.uid]: conversationInfo(otherUser),
       },
       lastMessage: null,
       updatedAt: new Date().toISOString(),
@@ -238,11 +427,11 @@ async function ensureConversation(meUser, otherUser){
 // changes their display name) but never for long.
 async function addMessage(meUser, otherUser, text){
   const convId = await ensureConversation(meUser, otherUser);
-  const message = { from: usernameDocId(meUser.username), text, ts: new Date().toISOString() };
+  const message = { from: meUser.uid, text, ts: new Date().toISOString() };
   await addDoc(collection(db, 'conversations', convId, 'messages'), message);
   await setDoc(doc(db, 'conversations', convId), {
     participantsInfo: {
-      [usernameDocId(meUser.username)]: conversationInfo(meUser),
+      [meUser.uid]: conversationInfo(meUser),
     },
     lastMessage: message,
     updatedAt: message.ts,
@@ -254,8 +443,10 @@ async function addMessage(meUser, otherUser, text){
 // onChange(messages) every time the subcollection changes (including
 // the very first load) so the open chat updates the moment the other
 // person replies, on any device. Returns an unsubscribe function.
-function watchConversationMessages(usernameA, usernameB, onChange){
-  const convId = conversationId(usernameA, usernameB);
+// uidA/uidB are Firebase Auth UIDs (see conversationId above).
+function watchConversationMessages(uidA, uidB, onChange){
+  requireFirebaseConfig();
+  const convId = conversationId(uidA, uidB);
   const q = fbQuery(collection(db, 'conversations', convId, 'messages'), orderBy('ts', 'asc'));
   return onSnapshot(q, (snap) => {
     onChange(snap.docs.map(d => d.data()));
@@ -268,12 +459,16 @@ function watchConversationMessages(usernameA, usernameB, onChange){
 // Live-subscribes to this user's conversation list, most recently
 // active first, using the denormalized participantsInfo/lastMessage so
 // the Chats panel can render straight from this snapshot with no
-// further reads. Returns an unsubscribe function.
-function watchUserConversations(username, onChange){
-  const lower = usernameDocId(username);
+// further reads. Returns an unsubscribe function. uid is the signed-in
+// user's Firebase Auth UID — this is the EXACT field the security rule
+// checks request.auth.uid against, so it has to be a UID here, not a
+// username, or the rule can never match what the query is actually
+// filtering on.
+function watchUserConversations(uid, onChange){
+  requireFirebaseConfig();
   const q = fbQuery(
     collection(db, 'conversations'),
-    where('participants', 'array-contains', lower),
+    where('participants', 'array-contains', uid),
     orderBy('updatedAt', 'desc'),
   );
   return onSnapshot(q, (snap) => {
@@ -281,8 +476,8 @@ function watchUserConversations(username, onChange){
       .map(d => d.data())
       .filter(conv => conv.lastMessage)
       .map(conv => {
-        const otherLower = conv.participants.find(p => p !== lower) || conv.participants[0];
-        const otherInfo = conv.participantsInfo && conv.participantsInfo[otherLower];
+        const otherUid = conv.participants.find(p => p !== uid) || conv.participants[0];
+        const otherInfo = conv.participantsInfo && conv.participantsInfo[otherUid];
         return otherInfo ? { other: otherInfo, lastMessage: conv.lastMessage } : null;
       })
       .filter(Boolean);
@@ -756,6 +951,7 @@ function validateRegistration({ displayName, username, password, confirmPassword
 }
 
 async function registerUser({ displayName, username, password, bio, avatar }){
+  requireFirebaseConfig();
   const errors = validateRegistration({ displayName, username, password, confirmPassword: password });
   if(Object.keys(errors).length){
     return { ok:false, errors };
@@ -786,7 +982,7 @@ async function registerUser({ displayName, username, password, bio, avatar }){
   };
 
   try{
-    await setDoc(doc(db, 'users', lower), user);
+    await setDoc(doc(db, 'users', credential.user.uid), user);
   }catch(e){
     return { ok:false, errors:{ form: t('errors.network') } };
   }
@@ -796,6 +992,7 @@ async function registerUser({ displayName, username, password, bio, avatar }){
 }
 
 async function loginUser({ username, password }){
+  requireFirebaseConfig();
   if(!username || !password){
     return { ok:false, error: t('auth.validation.required') };
   }
@@ -808,25 +1005,31 @@ async function loginUser({ username, password }){
     }
     return { ok:false, error: t('errors.network') };
   }
-  const user = await findUserByUsername(username);
-  if(!user){
-    // Auth account exists but its Firestore profile doc doesn't (e.g.
-    // it was deleted separately) — treat it the same as invalid login
-    // rather than letting the person into a broken, profile-less app.
+  let user;
+  try{
+    // Loads by UID (with automatic migration/recovery if needed) rather
+    // than trusting the username just typed into the form — that's what
+    // makes this resilient to the exact "Auth exists, profile doesn't"
+    // failure mode instead of just failing the same way again.
+    user = await loadOrRecoverProfile(credential.user);
+  }catch(e){
+    console.error('HUM: failed to load/recover profile after login', e);
     await signOut(auth).catch(() => {});
-    return { ok:false, error: t('auth.login.errorInvalid') };
+    return { ok:false, error: t('errors.network') };
   }
   state.me = user;
   return { ok:true, user };
 }
 
 async function logoutUser(){
+  requireFirebaseConfig();
   stopAllConversationWatchers();
   await signOut(auth).catch(() => {});
   state.me = null;
 }
 
 async function updateProfile(updates){
+  requireFirebaseConfig();
   const user = state.me;
   if(!user) return { ok:false, errors:{ form: t('auth.login.errorInvalid') } };
 
@@ -883,18 +1086,13 @@ async function updateProfile(updates){
   };
 
   try{
-    if(usernameChanged){
-      // Firestore document IDs can't be renamed in place — write the
-      // new doc, then remove the old one. Existing conversations keep
-      // referencing the old username (a known, acceptable trade-off
-      // for a prototype-simple schema): they won't disappear, but
-      // their "from"/participant records won't retroactively update to
-      // the new name.
-      await setDoc(doc(db, 'users', nextLower), updatedUser);
-      await deleteDoc(doc(db, 'users', usernameDocId(user.username)));
-    }else{
-      await setDoc(doc(db, 'users', nextLower), updatedUser);
-    }
+    // The profile document lives at users/{uid}, and uid never changes,
+    // so a username change is now just an ordinary field update on the
+    // same document — no more deleting one document and creating
+    // another under a different ID, which used to be the exact kind of
+    // operation that could leave an account's profile missing if it
+    // failed partway through.
+    await setDoc(doc(db, 'users', user.uid), updatedUser);
   }catch(e){
     return { ok:false, errors:{ form: t('errors.network') } };
   }
@@ -911,6 +1109,7 @@ async function updateProfile(updates){
 // network failure so callers can show a real error state instead of
 // silently showing zero results.
 async function searchUsers(searchQuery, excludeUsernameLower){
+  requireFirebaseConfig();
   const q = (searchQuery || '').trim().toLowerCase();
   const usersCol = collection(db, 'users');
   let rows = [];
@@ -1007,8 +1206,8 @@ function renderProfileSummary(container, user){
     </div>
   `;
 }
-function renderChatsListRow(user, lastMessage, meUsernameLower){
-  const isOwn = usernameDocId(lastMessage.from) === meUsernameLower;
+function renderChatsListRow(user, lastMessage, meUid){
+  const isOwn = lastMessage.from === meUid;
   const prefix = isOwn ? t('chat.youPrefix') : '';
   const previewText = (prefix + lastMessage.text).replace(/\s+/g, ' ').trim();
   return `
@@ -1069,9 +1268,8 @@ function renderChatsList(){
     els.chatsListContainer.innerHTML = chatsEmptyStateMarkup();
     return;
   }
-  const meLower = usernameDocId(me.username);
   els.chatsListContainer.innerHTML = rows
-    .map(({ other, lastMessage }) => renderChatsListRow(other, lastMessage, meLower))
+    .map(({ other, lastMessage }) => renderChatsListRow(other, lastMessage, me.uid))
     .join('');
 }
 
@@ -1109,10 +1307,9 @@ function renderChatMessages(){
     els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('chat.emptyTitle'))}</div>`;
     return;
   }
-  const meLower = usernameDocId(me.username);
   els.chatMessages.innerHTML = messages
     .map((m) => {
-      const isOwn = usernameDocId(m.from) === meLower;
+      const isOwn = m.from === me.uid;
       return `
         <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}">
           <div class="chat-msg__bubble">${escapeHtml(m.text)}</div>
@@ -1241,7 +1438,7 @@ function startConversationsWatcher(){
   state.chatsListLoading = true;
   state.chatsListError = false;
   if(state.activePanelView === "chats") renderChatsList();
-  state.unsubChatsList = watchUserConversations(me.username, (rows, err) => {
+  state.unsubChatsList = watchUserConversations(me.uid, (rows, err) => {
     state.chatsListLoading = false;
     if(err){
       state.chatsListError = true;
@@ -1725,6 +1922,26 @@ async function openChat(username, navigate) {
   if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
 
+  // Make sure the conversation document itself exists BEFORE watching
+  // its messages subcollection. This matters for the very first time
+  // two people open a chat with each other (no messages sent yet): the
+  // Firestore security rules for the messages subcollection have to
+  // verify membership by reading the parent conversation doc's
+  // participants — and Firestore evaluates security rules even for a
+  // read of a document that doesn't exist yet, which fails as
+  // "Missing or insufficient permissions" rather than quietly
+  // returning "not found". Ensuring the parent exists first removes
+  // that edge case entirely, for both people, every time.
+  try {
+    await ensureConversation(me, other);
+  } catch (e) {
+    console.error("HUM: failed to prepare conversation", e);
+    state.chatMessagesError = true;
+    state.chatMessagesLoading = false;
+    renderChatMessages();
+    return;
+  }
+
   // Swap in a live listener for this conversation's messages — this is
   // what makes a message the other person sends from their own device
   // appear here without needing to reopen the chat or refresh.
@@ -1734,7 +1951,7 @@ async function openChat(username, navigate) {
   state.chatMessagesError = false;
   renderChatMessages();
   const watchedUsername = other.username;
-  state.unsubChatMessages = watchConversationMessages(me.username, other.username, (messages, err) => {
+  state.unsubChatMessages = watchConversationMessages(me.uid, other.uid, (messages, err) => {
     state.chatMessagesLoading = false;
     if (err) {
       state.chatMessagesError = true;
@@ -1992,6 +2209,19 @@ window.addEventListener("orientationchange", syncViewportHeight);
 syncViewportHeight();
 
 function init() {
+  if (FIREBASE_CONFIG_ERROR) {
+    // Nothing below this can work without real Firebase config — show
+    // one clear, unmissable screen instead of a broken lang/auth flow
+    // that would just be quietly failing on every interaction.
+    els.langScreen.hidden = true;
+    els.authScreen.hidden = true;
+    els.appShell.hidden = true;
+    const detailEl = document.getElementById("firebaseConfigErrorDetail");
+    if (detailEl) detailEl.textContent = FIREBASE_CONFIG_ERROR;
+    document.getElementById("firebaseConfigError").hidden = false;
+    return;
+  }
+
   initTheme();
   applyTranslations();
   wireLangControls();
@@ -2021,45 +2251,57 @@ function init() {
 // the old synchronous getSession() localStorage read: it's what
 // decides, on every load, whether to show the auth screen or go
 // straight into the app with the right profile already loaded.
-onAuthStateChanged(auth, async (firebaseUser) => {
-  if (!hasStoredLang()) return; // still on the language screen
+//
+// Only registered when the config is valid — with a placeholder/bad
+// config this call is itself one of the things that can reach the
+// network, so it's skipped entirely rather than firing and failing.
+if (!FIREBASE_CONFIG_ERROR) {
+  onAuthStateChanged(auth, async (firebaseUser) => {
+    if (!hasStoredLang()) return; // still on the language screen
 
-  if (!firebaseUser) {
-    stopAllConversationWatchers();
-    state.me = null;
-    els.appShell.hidden = true;
-    els.authScreen.hidden = false;
-    if (state.authReady) showAuthTab("login"); // a real sign-out, not just the first load
-    state.authReady = true;
-    return;
-  }
+    if (!firebaseUser) {
+      stopAllConversationWatchers();
+      state.me = null;
+      els.appShell.hidden = true;
+      els.authScreen.hidden = false;
+      if (state.authReady) showAuthTab("login"); // a real sign-out, not just the first load
+      state.authReady = true;
+      return;
+    }
 
-  const usernameLower = firebaseUser.email.split("@")[0];
-  // onAuthSuccess() (called right after a successful login/register)
-  // already set state.me and entered the app immediately for instant
-  // feedback — this listener firing right afterwards for the same user
-  // is expected and harmless, just skip redoing the same work twice.
-  if (state.authReady && state.me && usernameDocId(state.me.username) === usernameLower) {
-    return;
-  }
+    // onAuthSuccess() (called right after a successful login/register)
+    // already set state.me and entered the app immediately for instant
+    // feedback — this listener firing right afterwards for the same
+    // account is expected and harmless, just skip redoing the same
+    // work twice. Compared by UID (not username) since UID is the
+    // stable identity — it stays correct even mid-session right after
+    // a username change, which comparing usernames would not.
+    if (state.authReady && state.me && state.me.uid === firebaseUser.uid) {
+      return;
+    }
 
-  try {
-    const user = await findUserByUsername(usernameLower);
-    if (!user) throw new Error("profile document missing for signed-in account");
-    state.me = user;
-    state.authReady = true;
-    enterApp();
-    startConversationsWatcher();
-  } catch (e) {
-    console.error("HUM: failed to load profile for existing session", e);
-    state.authReady = true;
-    state.me = null;
-    els.appShell.hidden = true;
-    els.authScreen.hidden = false;
-    showAuthTab("login");
-    setFieldError("loginForm", t("errors.network"));
-  }
-});
+    try {
+      // loadOrRecoverProfile resolves by UID and self-heals if the
+      // profile is missing (migrating an older username-keyed profile,
+      // or reconstructing a minimal one) instead of just failing —
+      // this is what fixes "Auth account exists, Firestore profile
+      // doesn't" instead of merely reporting it.
+      const user = await loadOrRecoverProfile(firebaseUser);
+      state.me = user;
+      state.authReady = true;
+      enterApp();
+      startConversationsWatcher();
+    } catch (e) {
+      console.error("HUM: failed to load or recover profile for existing session", e);
+      state.authReady = true;
+      state.me = null;
+      els.appShell.hidden = true;
+      els.authScreen.hidden = false;
+      showAuthTab("login");
+      setFieldError("loginForm", t("errors.network"));
+    }
+  });
+}
 
 // This <script> tag is an ES module, so it's deferred automatically —
 // the DOM is already fully parsed by the time this runs, same

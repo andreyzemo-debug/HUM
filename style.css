@@ -230,6 +230,18 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .lang-screen__title{font-size:26px;margin-bottom:10px;}
 .lang-screen__subtitle{color:var(--text-muted);font-size:14px;line-height:1.5;margin-bottom:30px;}
 .lang-choices{display:flex;flex-direction:column;gap:12px;}
+.lang-screen__card--left{text-align:left;}
+.lang-screen__card--left .brand-mark{justify-content:flex-start;}
+.config-error code{
+  background:var(--surface);border:1px solid var(--border);border-radius:6px;
+  padding:2px 6px;font-family:var(--font-mono);font-size:.9em;color:var(--accent-strong);
+}
+.config-error__detail{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:12px 14px;font-size:13px;color:var(--text);margin-bottom:20px;word-break:break-word;
+}
+.config-error__steps{margin:0 0 4px;padding-left:20px;color:var(--text-muted);font-size:13.5px;line-height:1.6;}
+.config-error__steps li{margin-bottom:4px;}
 .lang-choice{
   display:flex;align-items:center;justify-content:space-between;
   background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius-sm);
