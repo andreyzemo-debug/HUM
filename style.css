@@ -580,3 +580,96 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 @media (max-width:860px){
   .back-btn{display:inline-flex;}
 }
+
+/* ===================================================================
+   ICON BUTTON (kebab "more options" triggers on chat header / profile)
+=================================================================== */
+.icon-btn{
+  flex:none;width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;
+  background:transparent;border:none;border-radius:50%;color:var(--text-muted);cursor:pointer;
+  transition:background .15s ease,color .15s ease;
+}
+.icon-btn:hover{background:var(--surface-hover);color:var(--text);}
+.icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.icon-btn svg{width:20px;height:20px;fill:currentColor;}
+.chat-header{position:relative;}
+.chat-header__menu{margin-left:auto;}
+
+/* ===================================================================
+   ACTION MENU (popover with Remove / Block / Unblock)
+=================================================================== */
+.action-menu{
+  position:fixed;z-index:70;min-width:190px;max-width:calc(100vw - 24px);
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-soft);padding:6px;
+}
+.action-menu[hidden]{display:none;}
+.action-menu__item{
+  display:flex;align-items:center;width:100%;gap:10px;padding:12px 14px;border-radius:8px;
+  background:none;border:none;color:var(--text);font-size:14.5px;font-weight:600;
+  cursor:pointer;text-align:left;font-family:inherit;min-height:44px;box-sizing:border-box;
+}
+.action-menu__item:hover,.action-menu__item:focus-visible{background:var(--surface-hover);}
+.action-menu__item--danger{color:var(--danger);}
+.action-menu__item--danger:hover{background:var(--danger-soft);}
+
+/* ===================================================================
+   CONFIRM MODAL (Remove / Block / Unblock confirmations)
+=================================================================== */
+.modal-backdrop{
+  position:fixed;inset:0;background:rgba(8,9,13,.55);z-index:90;
+  display:flex;align-items:center;justify-content:center;
+  padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right))
+    max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+}
+.modal-backdrop[hidden]{display:none;}
+.modal{
+  width:100%;max-width:400px;max-height:100%;overflow-y:auto;box-sizing:border-box;
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);
+  padding:28px;box-shadow:var(--shadow-soft);
+}
+.modal__title{font-size:17px;font-weight:700;margin-bottom:10px;color:var(--text);}
+.modal__body{font-size:14px;color:var(--text-muted);line-height:1.55;margin-bottom:24px;}
+.modal__actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
+.modal__actions .btn{min-height:44px;}
+@media (max-width:480px){
+  .modal{padding:22px;border-radius:var(--radius-md);}
+  .modal__actions{flex-direction:column-reverse;}
+  .modal__actions .btn{width:100%;justify-content:center;}
+}
+
+/* ===================================================================
+   Chat "blocked" notice (shown above the composer when the person
+   currently open in this chat is on the signed-in user's block list)
+=================================================================== */
+.chat-blocked-notice{
+  flex:none;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
+  padding:12px 40px;font-size:13px;color:var(--text-muted);background:var(--surface);
+  border-bottom:1px solid var(--border);text-align:center;
+}
+.chat-blocked-notice[hidden]{display:none;}
+.link-btn{background:none;border:none;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer;padding:2px;}
+.link-btn:hover{color:var(--accent-strong);}
+@media (max-width:860px){
+  .chat-blocked-notice{padding-left:22px;padding-right:22px;}
+}
+@media (max-width:480px){
+  .chat-blocked-notice{padding-left:14px;padding-right:14px;}
+}
+
+/* ===================================================================
+   Blocked users list (Settings → Privacy)
+=================================================================== */
+.blocked-list{display:flex;flex-direction:column;gap:2px;}
+.blocked-list__empty{color:var(--text-faint);font-size:13.5px;padding:6px 0;}
+.blocked-list .result-row{padding-left:0;padding-right:0;cursor:default;}
+.blocked-list .result-row:hover{background:none;}
+/* The small-phone rule ".result-row .btn{display:none;}" further down
+   (it hides the "View" affordance in People Search results, since the
+   whole row is already tappable there) has higher specificity than
+   Unblock needs to beat by count of classes alone — so this must be at
+   least as specific AND come from a selector that targets ONLY the
+   blocked list, never touching People Search rows. Unblock has no
+   redundant "whole row is tappable" fallback, so it must stay visible
+   and tappable on every screen size, phones included. */
+.blocked-list .result-row .btn{display:inline-flex;}

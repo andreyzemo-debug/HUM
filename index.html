@@ -737,6 +737,15 @@
             </div>
           </div>
 
+          <div class="settings-group">
+            <h3 data-i18n="settings.privacy">Privacy</h3>
+            <p class="settings-group__hint" data-i18n="settings.privacyHint">
+              People you've blocked can't message you, and you won't see
+              them in search.
+            </p>
+            <div class="blocked-list" id="settingsBlockedList"></div>
+          </div>
+
           <div class="settings-group settings-group--danger">
             <h3 data-i18n="settings.account">Account</h3>
             <p class="settings-group__hint" id="settingsAccountHint">
@@ -761,12 +770,32 @@
           hidden
         >
           <header class="chat-header" id="chatHeaderInfo">
-            <div class="avatar avatar--online" id="chatHeaderAvatar"></div>
+            <div class="avatar" id="chatHeaderAvatar"></div>
             <div class="chat-header__info">
               <div class="chat-header__name" id="chatHeaderName"></div>
               <div class="chat-header__handle" id="chatHeaderHandle"></div>
             </div>
+            <button
+              type="button"
+              class="icon-btn chat-header__menu"
+              id="chatHeaderMenuBtn"
+              data-i18n-title="common.moreOptions"
+              title="More options"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <circle cx="12" cy="5.5" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="12" cy="18.5" r="1.6" />
+              </svg>
+            </button>
           </header>
+
+          <div class="chat-blocked-notice" id="chatBlockedNotice" hidden>
+            <span data-i18n="chat.blockedNotice">You've blocked this person.</span>
+            <button type="button" class="link-btn" id="chatBlockedUnblockBtn" data-i18n="common.unblock">Unblock</button>
+          </div>
 
           <div class="chat-messages" id="chatMessages"></div>
 
@@ -842,6 +871,21 @@
           </svg>
         </button>
       </nav>
+    </div>
+
+    <!-- ============ ACTION MENU (reused for profile/chat "more" menus) ============ -->
+    <div class="action-menu" id="actionMenu" role="menu" hidden></div>
+
+    <!-- ============ CONFIRM MODAL (reused for remove/block/unblock) ============ -->
+    <div class="modal-backdrop" id="confirmModalBackdrop" hidden>
+      <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+        <h3 class="modal__title" id="confirmModalTitle"></h3>
+        <p class="modal__body" id="confirmModalBody"></p>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--ghost" id="confirmModalCancel"></button>
+          <button type="button" class="btn btn--danger" id="confirmModalConfirm"></button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="app.js"></script>

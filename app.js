@@ -46,19 +46,57 @@
 //      published in the Firebase console — nothing in this file can
 //      apply it for you, and "Missing or insufficient permissions" on
 //      any read/write/listener means these rules aren't live yet, or
-//      don't match what's below):
+//      don't match what's below). This version adds the "blocked/"
+//      subcollection under each user and a block-aware check on who's
+//      allowed to CREATE a message — everything else is unchanged from
+//      before:
 //        rules_version = '2';
 //        service cloud.firestore {
 //          match /databases/{database}/documents {
 //
+//            function isSignedIn(){ return request.auth != null; }
+//            function conversationDoc(convId){
+//              return get(/databases/$(database)/documents/conversations/$(convId));
+//            }
+//            // Whichever of the two participants ISN'T `uid`.
+//            function otherParticipant(convId, uid){
+//              let parts = conversationDoc(convId).data.participants;
+//              return parts[0] == uid ? parts[1] : parts[0];
+//            }
+//            // True if `a` has blocked `b`, OR `b` has blocked `a` — a
+//            // block always stops messages moving in EITHER direction
+//            // between that pair, which is what lets a block also shut
+//            // down an already-open chat instead of just future ones.
+//            function isBlockedPair(a, b){
+//              return exists(/databases/$(database)/documents/users/$(a)/blocked/$(b))
+//                || exists(/databases/$(database)/documents/users/$(b)/blocked/$(a));
+//            }
+//
 //            match /users/{uid} {
 //              allow read: if true;
-//              allow create: if request.auth != null
+//              allow create: if isSignedIn()
 //                && request.auth.uid == uid
 //                && request.auth.uid == request.resource.data.uid;
-//              allow update: if request.auth != null
+//              allow update: if isSignedIn()
 //                && request.auth.uid == uid;
 //              allow delete: if false;
+//
+//              // blocked/{blockedUid}: records that THIS account (uid)
+//              // has blocked account `blockedUid`. Only the account
+//              // itself may ever read, add to, or remove from its own
+//              // block list — nobody can read who someone ELSE has
+//              // blocked (so being blocked is never directly visible to
+//              // the blocked person), and nobody can write into a block
+//              // list that isn't their own.
+//              match /blocked/{blockedUid} {
+//                allow read: if isSignedIn() && request.auth.uid == uid;
+//                allow create: if isSignedIn()
+//                  && request.auth.uid == uid
+//                  && request.auth.uid != blockedUid
+//                  && request.resource.data.blockedUid == blockedUid;
+//                allow update: if false;
+//                allow delete: if isSignedIn() && request.auth.uid == uid;
+//              }
 //            }
 //
 //            match /conversations/{convId} {
@@ -73,12 +111,17 @@
 //              // doesn't exist yet — without this branch that check
 //              // itself would fail as a permission error instead of
 //              // just resolving to "not found".
-//              allow read: if request.auth != null
+//              allow read: if isSignedIn()
 //                && (!exists(/databases/$(database)/documents/conversations/$(convId))
 //                    || request.auth.uid in resource.data.participants);
-//              allow create: if request.auth != null
+//              allow create: if isSignedIn()
 //                && request.auth.uid in request.resource.data.participants;
-//              allow update: if request.auth != null
+//              // Both participants can keep updating shared display
+//              // fields (participantsInfo/lastMessage/updatedAt) same as
+//              // before, AND their own per-user `hiddenFor` entry (used
+//              // by "Remove" to hide a conversation from just one side
+//              // without touching the other person's copy of it).
+//              allow update: if isSignedIn()
 //                && request.auth.uid in resource.data.participants;
 //              allow delete: if false;
 //
@@ -86,9 +129,22 @@
 //                // Same direct check, just against the PARENT
 //                // conversation's participants (individual message docs
 //                // don't carry the participants list themselves).
-//                allow read, create: if request.auth != null
+//                allow read: if isSignedIn()
 //                  && exists(/databases/$(database)/documents/conversations/$(convId))
-//                  && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participants;
+//                  && request.auth.uid in conversationDoc(convId).data.participants;
+//                // A message may only be created by one of the two
+//                // participants, AS themselves (from == the caller —
+//                // this stops anyone from forging a message as the
+//                // other person), and only while neither side currently
+//                // has the other blocked. This is the actual enforcement
+//                // point for blocking — the frontend also disables
+//                // sending, but THIS is what makes it impossible to
+//                // bypass by calling Firestore directly from the browser.
+//                allow create: if isSignedIn()
+//                  && exists(/databases/$(database)/documents/conversations/$(convId))
+//                  && request.auth.uid in conversationDoc(convId).data.participants
+//                  && request.resource.data.from == request.auth.uid
+//                  && !isBlockedPair(request.auth.uid, otherParticipant(convId, request.auth.uid));
 //                allow update, delete: if false;
 //              }
 //            }
@@ -106,7 +162,54 @@
 //      each message's `from`) now store UIDs rather than usernames.
 //      Username stays a profile/search field only, never the security
 //      identity — see usernameLower on the users/{uid} doc, used solely
-//      by findUserByUsername()/searchUsers() for People Search.)
+//      by findUserByUsername()/searchUsers() for People Search.
+//
+//      SCHEMA ADDITIONS for Remove/Block (see the BLOCKING and
+//      RemoveConversation sections further down in this file):
+//        - conversations/{convId}.hiddenFor: string[] — Firebase Auth
+//          UIDs who have "removed" this conversation from their OWN
+//          chat list. It never deletes the conversation or the other
+//          person's copy of it — it's purely a per-viewer visibility
+//          flag, cleared automatically the next time either side sends
+//          a message (see addMessage()), which is what makes starting a
+//          fresh conversation with that person "just work" again.
+//        - users/{uid}/blocked/{blockedUid}: { blockedUid, blockedUsername,
+//          blockedDisplayName, blockedAvatar, createdAt } — one doc per
+//          person `uid` has blocked. Denormalized display fields exist
+//          so Settings → Privacy → Blocked users can render the list
+//          without extra profile reads, the same pattern conversations
+//          already use for participantsInfo.)
+//
+//   6. Realtime Database → Rules, paste EXACTLY this (separate product
+//      from Firestore, separate console tab, separate rules language —
+//      see the PRESENCE section further down for why online/offline
+//      status specifically needs Realtime Database's onDisconnect()
+//      instead of anything Firestore offers):
+//        {
+//          "rules": {
+//            "presence": {
+//              "$uid": {
+//                ".read": "auth != null",
+//                ".write": "auth != null && auth.uid === $uid",
+//                ".validate": "newData.hasChildren(['state','lastChanged']) && (newData.child('state').val() === 'online' || newData.child('state').val() === 'offline')"
+//              }
+//            }
+//          }
+//        }
+//      (Any authenticated HUM user can READ any presence/{uid} node —
+//      that's what lets Chats/People Search/profiles/chat headers show
+//      a green dot for someone ELSE. Nobody can WRITE anywhere except
+//      their own presence/{their own uid} node — auth.uid === $uid is
+//      a direct structural check, the same shape as the Firestore
+//      users/{uid} rule above, just in Realtime Database's rules
+//      language. .validate rejects anything that isn't exactly the
+//      {state, lastChanged} shape this file writes — a value can't be
+//      pointed anywhere in the tree except a well-formed presence
+//      entry. Nothing here is public/world-writable, and nothing
+//      outside presence/ is reachable at all: nothing else in this
+//      project uses Realtime Database, and paths with no matching rule
+//      default to fully denied in Realtime Database, same as
+//      Firestore.)
 // ===================================================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
@@ -134,7 +237,18 @@ import {
   getDocs,
   addDoc,
   onSnapshot,
+  arrayUnion,
+  arrayRemove,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+import {
+  getDatabase,
+  ref as rtdbRef,
+  set as rtdbSet,
+  onValue,
+  onDisconnect,
+  serverTimestamp as rtdbServerTimestamp,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
 
 // Replace with YOUR OWN Firebase project's config (see setup steps
 // above). Every device that opens HUM with this same config is talking
@@ -148,6 +262,19 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "531135285257",
   appId: "1:531135285257:web:d6ff1c6bc799c5745fd0d8",
   measurementId: "G-5TVDTGLZND",
+  // Online/offline presence (see the PRESENCE section further down)
+  // lives in Firebase Realtime Database, a separate product from
+  // Firestore that this project didn't previously use — it needs its
+  // own URL. If the Firebase console's Realtime Database page hasn't
+  // been opened for this project yet, open Build → Realtime Database →
+  // "Create Database" once (any region is fine); the console will then
+  // show you this project's real URL at the top of the Data tab. The
+  // value below is the standard default for a database created in the
+  // us-central1 region — if your database is in a different region,
+  // replace this with the exact URL the console shows you (regional
+  // databases end in ".firebasedatabase.app" instead of
+  // ".firebaseio.com").
+  databaseURL: "https://humuz-57e4d-default-rtdb.firebaseio.com",
 };
 
 // A placeholder or malformed value anywhere in FIREBASE_CONFIG is
@@ -215,6 +342,23 @@ function requireFirebaseConfig(){
 const firebaseApp = initializeApp(FIREBASE_CONFIG);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
+// Realtime Database, used ONLY for online/offline presence (see the
+// PRESENCE section below) — Firestore remains the database of record
+// for users/conversations/messages/profiles, completely unchanged.
+// Wrapped in try/catch, unlike db/auth above: unlike Firestore/Auth,
+// getDatabase() DOES throw synchronously if databaseURL is missing or
+// not a well-formed URL — and since this whole file is one module,
+// letting that throw escape here would take the ENTIRE app down
+// (Firestore accounts/chat included) over a presence-only config
+// problem. `rtdb` stays null in that case; every presence function
+// below already checks for that and simply skips presence — the rest
+// of HUM keeps working exactly as it did before this feature existed.
+let rtdb = null;
+try {
+  rtdb = getDatabase(firebaseApp);
+} catch (e) {
+  console.error("[HUM] Realtime Database is not configured (online/offline status will be unavailable, everything else is unaffected):", e);
+}
 
 if(!FIREBASE_CONFIG_ERROR){
   // Keeps the signed-in session across page reloads/tabs on this device
@@ -232,6 +376,177 @@ if(!FIREBASE_CONFIG_ERROR){
 // types an "email" at any point.
 function emailForUsername(username) {
   return usernameDocId(username) + "@hum.local";
+}
+
+/* ===================================================================
+   SECTION: PRESENCE (Realtime Database)
+   Real online/offline status, backed by Firebase Realtime Database
+   instead of Firestore — Firestore has no server-side "this client
+   just disconnected" hook, but Realtime Database's onDisconnect() does,
+   which is what makes this actually reliable instead of a polling/
+   timer guess (closing a tab, losing network, or the process being
+   killed all still flip the status to offline once the socket drops
+   server-side, with no client-side code needing to run at that moment
+   at all).
+
+   Two halves:
+     - PUBLISHING: startPresence(uid) — called once someone is signed
+       in (see onAuthSuccess / the onAuthStateChanged restore path
+       below) — marks presence/{uid} "online" and arms onDisconnect()
+       to flip it to "offline" the moment this client's connection to
+       Realtime Database's servers drops, for ANY reason. Re-armed
+       automatically every time .info/connected flips back to true
+       (reconnect after a network blip), so the disconnect handler is
+       never stale.
+     - SUBSCRIBING: watchPresence(uid, onChange) / watchPresenceForScope
+       — used anywhere HUM shows another person's avatar (profile, chat
+       header, chat list, People Search) to live-toggle the green dot,
+       via a real Realtime Database listener — never a setInterval or
+       any other timer-based guess.
+=================================================================== */
+
+function presenceRef(uid){
+  return rtdbRef(rtdb, 'presence/' + uid);
+}
+
+// Set while startPresence() has a live .info/connected listener
+// registered, so a second call (e.g. a second onAuthStateChanged
+// firing for the same session) can't stack up duplicate listeners.
+let presenceConnectedUnsub = null;
+
+// Marks the signed-in user online for as long as this tab/device stays
+// connected to Realtime Database, and arms Realtime Database's own
+// onDisconnect() so the SERVER (not this client) flips them back to
+// offline the instant the connection drops — tab closed, reload,
+// navigating away, network loss, the process being killed, anything.
+// Safe to call more than once (a stale listener is always torn down
+// first via stopPresenceListener()).
+function startPresence(uid){
+  // rtdb is null when Realtime Database couldn't be initialized (see
+  // where it's created above) — presence just stays off in that case
+  // rather than throwing, so the rest of HUM (which doesn't depend on
+  // it) is completely unaffected.
+  if(!rtdb || !uid) return;
+  requireFirebaseConfig();
+  stopPresenceListener();
+  const myPresenceRef = presenceRef(uid);
+  const connectedRef = rtdbRef(rtdb, '.info/connected');
+  // .info/connected is Realtime Database's own "am I actually connected
+  // to the server right now" flag — distinct from "is someone
+  // authenticated in this tab" (that's `uid` even being passed in at
+  // all, decided by the auth listener below, never by this function).
+  // It fires again after every reconnect, which is exactly why
+  // onDisconnect() gets re-armed inside this callback instead of once
+  // outside it — a disconnect handler only covers the CURRENT
+  // connection; a fresh one is needed for each new one.
+  presenceConnectedUnsub = onValue(connectedRef, (snap) => {
+    if (snap.val() !== true) return; // not connected (yet, or anymore) — nothing to arm or set
+    // Register onDisconnect() BEFORE writing "online" — arming it
+    // first closes the race where the connection could drop in the
+    // gap between the two writes, which would otherwise leave this
+    // user stuck showing online with no disconnect handler ever having
+    // been registered to correct it.
+    onDisconnect(myPresenceRef)
+      .set({ state: 'offline', lastChanged: rtdbServerTimestamp() })
+      .then(() => {
+        rtdbSet(myPresenceRef, { state: 'online', lastChanged: rtdbServerTimestamp() });
+      })
+      .catch((e) => {
+        console.error('HUM: failed to arm presence onDisconnect', e);
+      });
+  }, (e) => {
+    console.error('HUM: presence .info/connected listener failed', e);
+  });
+}
+
+// Detaches this device's own .info/connected listener (does NOT write
+// "offline" — that's goOfflineNow()). Used when tearing down the
+// signed-in session's own state, e.g. inside stopAllConversationWatchers.
+function stopPresenceListener(){
+  if(presenceConnectedUnsub){
+    presenceConnectedUnsub();
+    presenceConnectedUnsub = null;
+  }
+}
+
+// Explicit, immediate "I'm signing out" — used by logoutUser() below,
+// BEFORE calling Firebase Auth's signOut(), while the ID token this
+// account is still valid so the Realtime Database rules (which check
+// auth.uid === $uid) still allow the write. onDisconnect() would
+// eventually reach the same result on its own once the socket drops,
+// but that can lag by a little; writing it directly on an intentional
+// logout makes the other person's screen update immediately instead of
+// waiting on it.
+async function goOfflineNow(uid){
+  stopPresenceListener();
+  if(!rtdb || !uid) return;
+  try {
+    await rtdbSet(presenceRef(uid), { state: 'offline', lastChanged: rtdbServerTimestamp() });
+  } catch(e){
+    console.error('HUM: failed to set presence offline on logout', e);
+  }
+}
+
+// Live-subscribes to one user's presence/{uid} node. onChange receives
+// a plain boolean (true = online) — nothing about lastSeen, page-load
+// time, or whether the person has ever logged in before factors into
+// it; a missing node (nobody has ever published presence for that uid,
+// e.g. right after their very first ever login before startPresence()
+// finishes its first write) is treated as offline, never online.
+// Returns an unsubscribe function (a no-op one if Realtime Database
+// isn't available, so callers never need to null-check the return).
+function watchPresence(uid, onChange){
+  if(!rtdb || !uid){
+    onChange(false);
+    return () => {};
+  }
+  return onValue(presenceRef(uid), (snap) => {
+    const val = snap.val();
+    onChange(!!val && val.state === 'online');
+  }, (err) => {
+    console.error('HUM: presence listener failed', err);
+    onChange(false);
+  });
+}
+
+// Every screen that lists OTHER people (Chats, People Search, a
+// profile, a chat header) re-renders by replacing innerHTML wholesale
+// (see renderChatsList/renderPeopleResults/renderProfileHero/
+// renderChatHeader) rather than diffing the DOM — so presence
+// listeners for whoever was on screen before a re-render have to be
+// torn down explicitly, or they'd silently pile up forever. This is
+// the shared bookkeeping for that: one bucket of {uid, unsub} per
+// named "scope" (one per screen), so each render can cleanly clear its
+// own scope's old listeners before attaching new ones.
+const presenceWatchersByScope = new Map();
+
+function clearPresenceWatchers(scope){
+  const list = presenceWatchersByScope.get(scope);
+  if(list) list.forEach(({ unsub }) => unsub());
+  presenceWatchersByScope.set(scope, []);
+}
+
+// Subscribes to `uid`'s presence and toggles the "avatar--online"
+// modifier class (the CSS class that already draws HUM's existing
+// green-dot indicator — see .avatar--online::after in style.css) on
+// every element inside `container` marked data-presence-uid="uid",
+// live, for as long as `scope`'s listeners haven't since been cleared.
+function watchPresenceForScope(scope, uid, container){
+  const unsub = watchPresence(uid, (isOnline) => {
+    if(!container || !container.isConnected) return;
+    let selector;
+    try {
+      selector = `[data-presence-uid="${CSS.escape(uid)}"]`;
+    } catch(e){
+      return; // uid somehow isn't valid to select on — skip rather than throw
+    }
+    container.querySelectorAll(selector).forEach((el) => {
+      el.classList.toggle('avatar--online', isOnline);
+    });
+  });
+  const list = presenceWatchersByScope.get(scope) || [];
+  list.push({ uid, unsub });
+  presenceWatchersByScope.set(scope, list);
 }
 
 /* ===================================================================
@@ -435,6 +750,12 @@ async function addMessage(meUser, otherUser, text){
     },
     lastMessage: message,
     updatedAt: message.ts,
+    // A real message is the clearest possible signal that this
+    // conversation is active again — clear BOTH sides' "removed from my
+    // chat list" flag (see the BLOCKING/REMOVE section below) so a
+    // fresh message always makes the thread reappear for sender and
+    // recipient alike, exactly like starting a new conversation should.
+    hiddenFor: arrayRemove(meUser.uid, otherUser.uid),
   }, { merge:true });
   return message;
 }
@@ -475,15 +796,105 @@ function watchUserConversations(uid, onChange){
     const rows = snap.docs
       .map(d => d.data())
       .filter(conv => conv.lastMessage)
+      // "Remove" (see removeConversationForMe) hides a conversation from
+      // just the person who removed it, by adding their own uid to
+      // hiddenFor — the other participant's copy of the same doc, and
+      // their own chat list, are completely untouched.
+      .filter(conv => !(Array.isArray(conv.hiddenFor) && conv.hiddenFor.includes(uid)))
       .map(conv => {
         const otherUid = conv.participants.find(p => p !== uid) || conv.participants[0];
         const otherInfo = conv.participantsInfo && conv.participantsInfo[otherUid];
-        return otherInfo ? { other: otherInfo, lastMessage: conv.lastMessage } : null;
+        return otherInfo ? { other: otherInfo, otherUid, lastMessage: conv.lastMessage } : null;
       })
       .filter(Boolean);
     onChange(rows);
   }, (err) => {
     console.error('HUM: conversations listener failed', err);
+    onChange(null, err);
+  });
+}
+
+/* ===================================================================
+   SECTION: REMOVE / BLOCK (Firestore)
+   Two independent, cooperating pieces of per-user state:
+     - "Remove" only ever touches conversations/{convId}.hiddenFor — a
+       plain per-viewer visibility flag. It never deletes anything and
+       never affects the other participant.
+     - "Block" is recorded at users/{uid}/blocked/{blockedUid}. It's
+       enforced server-side by the Firestore rules pasted at the top of
+       this file (a blocked pairing can't create a message in EITHER
+       direction), and ALSO immediately hides the conversation from the
+       blocker the same way Remove does, since a block implies removal.
+   Both directions of "already-open chat" are covered: blocking someone
+   disables sending in the chat UI immediately (see applyChatBlockState
+   in the UI section), and the security rule rejects the write even if
+   something tried to call Firestore directly.
+=================================================================== */
+
+// Hides conversation convId from just `uid`'s own chat list — used by
+// both removeConversationForMe() and blockUser() below. No-ops quietly
+// if the conversation doesn't exist yet (nothing to hide).
+async function hideConversationFor(uid, otherUid){
+  requireFirebaseConfig();
+  const convId = conversationId(uid, otherUid);
+  const ref = doc(db, 'conversations', convId);
+  const snap = await getDoc(ref);
+  if(!snap.exists()) return;
+  await setDoc(ref, { hiddenFor: arrayUnion(uid) }, { merge:true });
+}
+
+// "Remove a person" — hides the conversation from the signed-in user's
+// own chat list only. Does not touch the other participant's account,
+// profile, or their copy of the conversation in any way.
+async function removeConversationForMe(meUid, otherUid){
+  await hideConversationFor(meUid, otherUid);
+}
+
+function blockedDocRef(meUid, otherUid){
+  return doc(db, 'users', meUid, 'blocked', otherUid);
+}
+
+// Blocks otherUser for meUser: writes the block record (this is what
+// the Firestore rules check to reject future messages in either
+// direction — see the rules comment above) and, since a block implies
+// "I don't want to see this conversation anymore", also hides the
+// conversation the same way Remove does.
+async function blockUser(meUid, otherUser){
+  requireFirebaseConfig();
+  await setDoc(blockedDocRef(meUid, otherUser.uid), {
+    blockedUid: otherUser.uid,
+    blockedUsername: otherUser.username,
+    blockedDisplayName: otherUser.displayName,
+    blockedAvatar: otherUser.avatar || { type:'generated' },
+    createdAt: new Date().toISOString(),
+  });
+  await hideConversationFor(meUid, otherUser.uid).catch((e) => {
+    // The block itself already succeeded and is what actually matters
+    // for safety (enforced server-side); failing to also hide the
+    // now-stale conversation row is a cosmetic follow-up, not a reason
+    // to report the whole action as failed.
+    console.error('HUM: blocked user but failed to hide conversation', e);
+  });
+}
+
+// Restores normal messaging with otherUid. Does not un-hide any
+// conversation on its own — same as an ordinary Remove, it reappears
+// the moment either side sends a new message (see addMessage()).
+async function unblockUser(meUid, otherUid){
+  requireFirebaseConfig();
+  await deleteDoc(blockedDocRef(meUid, otherUid));
+}
+
+// Live-subscribes to the signed-in user's own block list. Only ever
+// reads users/{uid}/blocked for `uid === the signed-in user` — the
+// security rules don't allow reading anyone else's.
+function watchBlockedUsers(uid, onChange){
+  requireFirebaseConfig();
+  const q = fbQuery(collection(db, 'users', uid, 'blocked'), orderBy('createdAt', 'desc'));
+  return onSnapshot(q, (snap) => {
+    onChange(snap.docs.map(d => d.data()));
+  }, (err) => {
+    console.error('HUM: blocked-users listener failed', err);
     onChange(null, err);
   });
 }
@@ -503,12 +914,14 @@ const translations = {
       bio:'About', bioPlaceholder:'Say something about yourself',
       show:'Show', hide:'Hide', cancel:'Cancel', saveChanges:'Save changes',
       close:'Close', back:'Back', avatarTooLarge:'Image is too large (max 700KB).',
-      loading:'Loading…'
+      loading:'Loading…', moreOptions:'More options',
+      remove:'Remove', block:'Block', unblock:'Unblock', confirm:'Confirm'
     },
     errors:{
       network:'Something went wrong connecting to HUM. Check your connection and try again.',
       userNotFound:'That account could not be found.',
-      requiresRecentLogin:'Please log out and log back in, then try again.'
+      requiresRecentLogin:'Please log out and log back in, then try again.',
+      sendFailed:'This message could not be delivered.'
     },
     langScreen:{
       title:'Choose your language', subtitle:'You can change this anytime in Settings.'
@@ -562,18 +975,32 @@ const translations = {
     },
     chat:{
       emptyTitle:'Start the conversation', inputPlaceholder:'Message', send:'Send',
-      youPrefix:'You: '
+      youPrefix:'You: ', blockedNotice:"You've blocked this person."
+    },
+    menu:{
+      remove:'Remove', block:'Block', unblock:'Unblock'
+    },
+    confirm:{
+      removeTitle:'Remove this chat?',
+      removeBody:'This removes the conversation from your chat list. {name} will keep their copy of it, and you can start a new conversation with them anytime.',
+      blockTitle:'Block {name}?',
+      blockBody:"{name} won't be able to message you, and you won't see them in search or your chat list. You can unblock them anytime in Settings.",
+      unblockTitle:'Unblock {name}?',
+      unblockBody:"{name} will be able to message you again, and will reappear in search."
     },
     settings:{
       title:'Settings',
       language:'Language', languageHint:'Choose the language HUM speaks to you in.',
       appearance:'Appearance', appearanceHint:'Switch between a dark or light signal.',
       dark:'Dark', light:'Light',
+      privacy:'Privacy', privacyHint:"People you've blocked can't message you, and you won't see them in search.",
+      blockedUsersEmpty:"You haven't blocked anyone.",
       account:'Account', accountHint:'Signed in as {username}.'
     },
     toast:{
       loggedIn:'Welcome back, {name}.', accountCreated:'Account created. Welcome, {name}!',
-      loggedOut:'Logged out.', profileSaved:'Profile updated.', langChanged:'Language switched.'
+      loggedOut:'Logged out.', profileSaved:'Profile updated.', langChanged:'Language switched.',
+      chatRemoved:'Chat removed.', userBlocked:'{name} has been blocked.', userUnblocked:'{name} has been unblocked.'
     }
   },
 
@@ -586,12 +1013,14 @@ const translations = {
       bio:'О себе', bioPlaceholder:'Расскажите немного о себе',
       show:'Показать', hide:'Скрыть', cancel:'Отмена', saveChanges:'Сохранить',
       close:'Закрыть', back:'Назад', avatarTooLarge:'Изображение слишком большое (макс. 700КБ).',
-      loading:'Загрузка…'
+      loading:'Загрузка…', moreOptions:'Ещё',
+      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать', confirm:'Подтвердить'
     },
     errors:{
       network:'Не удалось подключиться к HUM. Проверьте соединение и попробуйте снова.',
       userNotFound:'Такой аккаунт не найден.',
-      requiresRecentLogin:'Выйдите из аккаунта и войдите снова, затем повторите попытку.'
+      requiresRecentLogin:'Выйдите из аккаунта и войдите снова, затем повторите попытку.',
+      sendFailed:'Это сообщение не удалось доставить.'
     },
     langScreen:{
       title:'Выберите язык', subtitle:'Вы всегда сможете изменить его в настройках.'
@@ -645,18 +1074,32 @@ const translations = {
     },
     chat:{
       emptyTitle:'Начните разговор', inputPlaceholder:'Сообщение', send:'Отправить',
-      youPrefix:'Вы: '
+      youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.'
+    },
+    menu:{
+      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать'
+    },
+    confirm:{
+      removeTitle:'Удалить этот чат?',
+      removeBody:'Разговор будет удалён из вашего списка чатов. У {name} останется своя копия, и вы всегда сможете начать переписку заново.',
+      blockTitle:'Заблокировать {name}?',
+      blockBody:'{name} не сможет писать вам, и вы не увидите этого пользователя в поиске или списке чатов. Разблокировать можно в любой момент в Настройках.',
+      unblockTitle:'Разблокировать {name}?',
+      unblockBody:'{name} снова сможет писать вам и появится в поиске.'
     },
     settings:{
       title:'Настройки',
       language:'Язык', languageHint:'Выберите язык интерфейса HUM.',
       appearance:'Внешний вид', appearanceHint:'Переключение между тёмным и светлым режимом.',
       dark:'Тёмная', light:'Светлая',
+      privacy:'Приватность', privacyHint:'Заблокированные пользователи не смогут писать вам и не будут видны в поиске.',
+      blockedUsersEmpty:'Вы никого не заблокировали.',
       account:'Аккаунт', accountHint:'Вы вошли как {username}.'
     },
     toast:{
       loggedIn:'С возвращением, {name}.', accountCreated:'Аккаунт создан. Добро пожаловать, {name}!',
-      loggedOut:'Вы вышли из аккаунта.', profileSaved:'Профиль обновлён.', langChanged:'Язык изменён.'
+      loggedOut:'Вы вышли из аккаунта.', profileSaved:'Профиль обновлён.', langChanged:'Язык изменён.',
+      chatRemoved:'Чат удалён.', userBlocked:'{name} заблокирован(а).', userUnblocked:'{name} разблокирован(а).'
     }
   },
 
@@ -669,12 +1112,14 @@ const translations = {
       bio:'Men haqimda', bioPlaceholder:'O‘zingiz haqingizda yozing',
       show:'Ko‘rsatish', hide:'Yashirish', cancel:'Bekor qilish', saveChanges:'Saqlash',
       close:'Yopish', back:'Orqaga', avatarTooLarge:'Rasm hajmi juda katta (maks. 700KB).',
-      loading:'Yuklanmoqda…'
+      loading:'Yuklanmoqda…', moreOptions:'Yana',
+      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish', confirm:'Tasdiqlash'
     },
     errors:{
       network:'HUM bilan bog‘lanishda xatolik yuz berdi. Aloqani tekshirib, qayta urinib ko‘ring.',
       userNotFound:'Bunday akkaunt topilmadi.',
-      requiresRecentLogin:'Hisobdan chiqib, qayta kiring va yana urinib ko‘ring.'
+      requiresRecentLogin:'Hisobdan chiqib, qayta kiring va yana urinib ko‘ring.',
+      sendFailed:'Bu xabarni yetkazib bo‘lmadi.'
     },
     langScreen:{
       title:'Tilni tanlang', subtitle:'Buni istalgan vaqtda Sozlamalarda o‘zgartirishingiz mumkin.'
@@ -728,18 +1173,32 @@ const translations = {
     },
     chat:{
       emptyTitle:'Suhbatni boshlang', inputPlaceholder:'Xabar', send:'Yuborish',
-      youPrefix:'Siz: '
+      youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.'
+    },
+    menu:{
+      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish'
+    },
+    confirm:{
+      removeTitle:'Bu suhbat olib tashlansinmi?',
+      removeBody:'Suhbat sizning ro‘yxatingizdan olib tashlanadi. {name} da o‘z nusxasi qoladi, va istalgan vaqtda u bilan yangi suhbat boshlashingiz mumkin.',
+      blockTitle:'{name} bloklansinmi?',
+      blockBody:'{name} sizga xabar yoza olmaydi va u qidiruv yoki suhbatlar ro‘yxatida ko‘rinmaydi. Istalgan vaqtda Sozlamalarda blokdan chiqarishingiz mumkin.',
+      unblockTitle:'{name} blokdan chiqarilsinmi?',
+      unblockBody:'{name} sizga yana xabar yoza oladi va qidiruvda qayta ko‘rinadi.'
     },
     settings:{
       title:'Sozlamalar',
       language:'Til', languageHint:'HUM siz bilan gaplashadigan tilni tanlang.',
       appearance:'Ko‘rinish', appearanceHint:'Tungi yoki kunduzgi rejim orasida almashing.',
       dark:'Tungi', light:'Kunduzgi',
+      privacy:'Maxfiylik', privacyHint:'Siz bloklagan foydalanuvchilar sizga yoza olmaydi va qidiruvda ko‘rinmaydi.',
+      blockedUsersEmpty:'Siz hech kimni bloklamagansiz.',
       account:'Akkount', accountHint:'Siz {username} sifatida kirdingiz.'
     },
     toast:{
       loggedIn:'Xush kelibsiz, {name}.', accountCreated:'Akkount yaratildi. Xush kelibsiz, {name}!',
-      loggedOut:'Tizimdan chiqdingiz.', profileSaved:'Profil yangilandi.', langChanged:'Til o‘zgartirildi.'
+      loggedOut:'Tizimdan chiqdingiz.', profileSaved:'Profil yangilandi.', langChanged:'Til o‘zgartirildi.',
+      chatRemoved:'Suhbat olib tashlandi.', userBlocked:'{name} bloklandi.', userUnblocked:'{name} blokdan chiqarildi.'
     }
   }
 };
@@ -1023,6 +1482,14 @@ async function loginUser({ username, password }){
 
 async function logoutUser(){
   requireFirebaseConfig();
+  // Mark presence offline BEFORE signing out (and before
+  // stopAllConversationWatchers, which is what actually tears down the
+  // .info/connected listener) — signOut() invalidates the ID token, and
+  // the Realtime Database rules require a still-valid auth.uid to allow
+  // writing presence/{uid}, so this has to happen while still signed in.
+  if(state.me){
+    await goOfflineNow(state.me.uid);
+  }
   stopAllConversationWatchers();
   await signOut(auth).catch(() => {});
   state.me = null;
@@ -1154,22 +1621,25 @@ function avatarBg(user){
 function renderPeopleResults(container, users, { query, selectedUsername, loading, error }){
   if(loading){
     container.innerHTML = `<div class="people-results__hint">${escapeHtml(t('common.loading'))}</div>`;
+    clearPresenceWatchers('peopleResults');
     return;
   }
   if(error){
     container.innerHTML = `<div class="people-results__empty">${escapeHtml(t('errors.network'))}</div>`;
+    clearPresenceWatchers('peopleResults');
     return;
   }
   if(!users.length){
     container.innerHTML = `
       <div class="people-results__empty">${query ? escapeHtml(t('people.empty')) : escapeHtml(t('people.hint'))}</div>
     `;
+    clearPresenceWatchers('peopleResults');
     return;
   }
 
   container.innerHTML = users.map(u => `
     <div class="result-row${selectedUsername === u.username ? ' is-active' : ''}" data-username="${escapeHtml(u.username)}" role="button" tabindex="0">
-      <div class="avatar avatar--online" style="background:${avatarBg(u)}">${avatarMarkup(u)}</div>
+      <div class="avatar" data-presence-uid="${escapeHtml(u.uid)}" style="background:${avatarBg(u)}">${avatarMarkup(u)}</div>
       <div class="result-row__info">
         <div class="result-row__name">${escapeHtml(u.displayName)}</div>
         <div class="result-row__handle">@${escapeHtml(u.username)}</div>
@@ -1177,23 +1647,38 @@ function renderPeopleResults(container, users, { query, selectedUsername, loadin
       <button type="button" class="btn btn--ghost btn--small" data-username="${escapeHtml(u.username)}" data-action="view">${escapeHtml(t('people.view'))}</button>
     </div>
   `).join('');
+  clearPresenceWatchers('peopleResults');
+  users.forEach(u => watchPresenceForScope('peopleResults', u.uid, container));
 }
 
 function renderProfileHero(container, user, isSelf){
   const joined = formatDate(user.createdAt, getLang());
   container.innerHTML = `
     <div class="profile-hero">
-      <div class="avatar avatar--online" style="width:100px;height:100px;font-size:34px;background:${avatarBg(user)}">${avatarMarkup(user)}</div>
+      <div class="avatar" data-presence-uid="${escapeHtml(user.uid)}" style="width:100px;height:100px;font-size:34px;background:${avatarBg(user)}">${avatarMarkup(user)}</div>
       <h2 class="profile-hero__name">${escapeHtml(user.displayName)}${isSelf ? ` <span style="color:var(--text-faint);font-weight:500;font-size:15px;">(${escapeHtml(t('people.you'))})</span>` : ''}</h2>
       <div class="profile-hero__handle">@${escapeHtml(user.username)}</div>
       <p class="profile-hero__bio">${user.bio ? escapeHtml(user.bio) : `<em style="color:var(--text-faint)">${escapeHtml(t('profile.noBio'))}</em>`}</p>
-      ${!isSelf ? `<div class="profile-hero__actions"><button type="button" class="btn btn--primary btn--small" id="btnMessageUser">${escapeHtml(t('profile.message'))}</button></div>` : ''}
+      ${!isSelf ? `
+        <div class="profile-hero__actions">
+          <button type="button" class="btn btn--primary btn--small" id="btnMessageUser">${escapeHtml(t('profile.message'))}</button>
+          <button type="button" class="icon-btn" id="btnProfileMenu" data-i18n-title="common.moreOptions" title="${escapeHtml(t('common.moreOptions'))}" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>
+          </button>
+        </div>
+      ` : ''}
     </div>
     <div class="profile-meta">
       <div class="profile-meta__row"><span>${escapeHtml(t('common.username'))}</span><span>@${escapeHtml(user.username)}</span></div>
       <div class="profile-meta__row"><span>${escapeHtml(t('profile.joined'))}</span><span>${escapeHtml(joined)}</span></div>
     </div>
   `;
+  // Own profile never shows a presence dot (there's nothing informative
+  // about telling yourself you're online) — only subscribe for others.
+  clearPresenceWatchers('profileView');
+  if(!isSelf && user.uid){
+    watchPresenceForScope('profileView', user.uid, container);
+  }
 }
 
 function renderProfileSummary(container, user){
@@ -1206,13 +1691,13 @@ function renderProfileSummary(container, user){
     </div>
   `;
 }
-function renderChatsListRow(user, lastMessage, meUid){
+function renderChatsListRow(user, otherUid, lastMessage, meUid){
   const isOwn = lastMessage.from === meUid;
   const prefix = isOwn ? t('chat.youPrefix') : '';
   const previewText = (prefix + lastMessage.text).replace(/\s+/g, ' ').trim();
   return `
     <div class="result-row" data-username="${escapeHtml(user.username)}" role="button" tabindex="0">
-      <div class="avatar avatar--online" style="background:${avatarBg(user)}">${avatarMarkup(user)}</div>
+      <div class="avatar" data-presence-uid="${escapeHtml(otherUid)}" style="background:${avatarBg(user)}">${avatarMarkup(user)}</div>
       <div class="result-row__info">
         <div class="result-row__name">${escapeHtml(user.displayName)}</div>
         <div class="result-row__preview">${escapeHtml(previewText)}</div>
@@ -1249,6 +1734,7 @@ function renderChatsList(){
   const me = currentUser();
   if(!me){
     els.chatsListContainer.innerHTML = '';
+    clearPresenceWatchers('chatsList');
     return;
   }
   if(state.chatsListError){
@@ -1257,28 +1743,39 @@ function renderChatsList(){
         ${escapeHtml(t('errors.network'))}
       </div>
     `;
+    clearPresenceWatchers('chatsList');
     return;
   }
   if(state.chatsListLoading){
     els.chatsListContainer.innerHTML = `<div class="people-results__hint">${escapeHtml(t('common.loading'))}</div>`;
+    clearPresenceWatchers('chatsList');
     return;
   }
-  const rows = state.chatsListRows || [];
+  const rows = (state.chatsListRows || []).filter((row) => !state.myBlockedUids.has(row.otherUid));
   if(!rows.length){
     els.chatsListContainer.innerHTML = chatsEmptyStateMarkup();
+    clearPresenceWatchers('chatsList');
     return;
   }
   els.chatsListContainer.innerHTML = rows
-    .map(({ other, lastMessage }) => renderChatsListRow(other, lastMessage, me.uid))
+    .map(({ other, otherUid, lastMessage }) => renderChatsListRow(other, otherUid, lastMessage, me.uid))
     .join('');
+  clearPresenceWatchers('chatsList');
+  rows.forEach(({ otherUid }) => watchPresenceForScope('chatsList', otherUid, els.chatsListContainer));
 }
 
 function renderChatHeader(user){
   if(!els.chatHeaderAvatar) return;
   els.chatHeaderAvatar.style.background = avatarBg(user);
   els.chatHeaderAvatar.innerHTML = avatarMarkup(user);
+  els.chatHeaderAvatar.classList.remove('avatar--online'); // reset; watchPresenceForScope below sets it live
+  els.chatHeaderAvatar.setAttribute('data-presence-uid', user.uid || '');
   els.chatHeaderName.textContent = user.displayName;
   els.chatHeaderHandle.textContent = '@' + user.username;
+  clearPresenceWatchers('chatHeader');
+  if(user.uid){
+    watchPresenceForScope('chatHeader', user.uid, els.chatHeaderInfo || document);
+  }
 }
 
 // Like renderChatsList(), this renders from whatever the currently
@@ -1359,6 +1856,9 @@ const els = {
   chatHeaderAvatar: document.getElementById("chatHeaderAvatar"),
   chatHeaderName: document.getElementById("chatHeaderName"),
   chatHeaderHandle: document.getElementById("chatHeaderHandle"),
+  chatHeaderMenuBtn: document.getElementById("chatHeaderMenuBtn"),
+  chatBlockedNotice: document.getElementById("chatBlockedNotice"),
+  chatBlockedUnblockBtn: document.getElementById("chatBlockedUnblockBtn"),
   chatMessages: document.getElementById("chatMessages"),
   chatComposerForm: document.getElementById("chatComposerForm"),
   chatInput: document.getElementById("chatInput"),
@@ -1375,7 +1875,15 @@ const els = {
   settingsAccountHint: document.getElementById("settingsAccountHint"),
   settingsUsername: document.getElementById("settingsUsername"),
   settingsLogout: document.getElementById("settingsLogout"),
+  settingsBlockedList: document.getElementById("settingsBlockedList"),
   themeToggle: document.getElementById("themeToggle"),
+
+  actionMenu: document.getElementById("actionMenu"),
+  confirmModalBackdrop: document.getElementById("confirmModalBackdrop"),
+  confirmModalTitle: document.getElementById("confirmModalTitle"),
+  confirmModalBody: document.getElementById("confirmModalBody"),
+  confirmModalCancel: document.getElementById("confirmModalCancel"),
+  confirmModalConfirm: document.getElementById("confirmModalConfirm"),
 
   appShellRoot: document.getElementById("appShell"),
 };
@@ -1386,7 +1894,9 @@ let state = {
   activePanelView: "chats",
   mainView: "welcome",
   viewingUsername: null,
+  viewingUser: null, // full profile object for whoever mainProfileView is showing (see openProfileView)
   activeChatUsername: null,
+  activeChatUser: null, // full profile object for the open chat's other participant (see openChat)
   registerAvatar: { type: "generated" },
   profileEditAvatar: { type: "generated" },
 
@@ -1411,6 +1921,23 @@ let state = {
   chatMessagesLoading: true,
   chatMessagesError: false,
   unsubChatMessages: null,
+
+  // The signed-in user's own block list — kept live by
+  // watchBlockedUsers() for as long as someone is logged in, the same
+  // way chatsListRows is. myBlockedUids is what People Search, the
+  // Chats list, and the open-chat composer all check against; the
+  // denormalized rows (with display info) back the Settings → Privacy
+  // → Blocked users list.
+  myBlockedUids: new Set(),
+  blockedUsersRows: [],
+  blockedUsersLoading: true,
+  unsubBlockedUsers: null,
+
+  // Tracks which "⋮" button currently has the shared action-menu
+  // popover open, so a click elsewhere (or Escape) can close it and
+  // restore aria-expanded on the right element (see openActionMenu/
+  // closeActionMenu).
+  actionMenuTrigger: null,
 };
 
 // Stops any live Firestore listeners this device has open — called on
@@ -1420,12 +1947,22 @@ let state = {
 function stopAllConversationWatchers(){
   if(state.unsubChatsList){ state.unsubChatsList(); state.unsubChatsList = null; }
   if(state.unsubChatMessages){ state.unsubChatMessages(); state.unsubChatMessages = null; }
+  if(state.unsubBlockedUsers){ state.unsubBlockedUsers(); state.unsubBlockedUsers = null; }
   state.chatsListRows = [];
   state.chatsListLoading = true;
   state.chatsListError = false;
   state.chatMessagesData = [];
   state.chatMessagesLoading = true;
   state.chatMessagesError = false;
+  state.myBlockedUids = new Set();
+  state.blockedUsersRows = [];
+  state.blockedUsersLoading = true;
+  // Detach this device's own presence .info/connected listener, and
+  // every "watching someone else's presence" listener currently open
+  // on any screen — nothing about anyone's online status should keep
+  // updating once nobody is signed in on this device.
+  stopPresenceListener();
+  ['chatsList', 'peopleResults', 'profileView', 'chatHeader'].forEach(clearPresenceWatchers);
 }
 
 // Starts (or restarts) the live "who am I talking to, and what did
@@ -1449,6 +1986,305 @@ function startConversationsWatcher(){
     if(state.activePanelView === "chats") renderChatsList();
   });
 }
+
+// Starts (or restarts) the live block-list listener for the signed-in
+// user, the same shape as startConversationsWatcher() above. Keeps
+// state.myBlockedUids/blockedUsersRows current across devices — e.g.
+// blocking someone on one phone hides them from search/chat on a
+// laptop signed into the same account within moments, without a
+// refresh.
+function startBlockedUsersWatcher(){
+  if(state.unsubBlockedUsers) state.unsubBlockedUsers();
+  const me = currentUser();
+  if(!me) return;
+  state.blockedUsersLoading = true;
+  state.unsubBlockedUsers = watchBlockedUsers(me.uid, (rows, err) => {
+    state.blockedUsersLoading = false;
+    if(err){
+      console.error("HUM: failed to load blocked users", err);
+    }else{
+      state.blockedUsersRows = rows;
+      state.myBlockedUids = new Set(rows.map((r) => r.blockedUid));
+    }
+    renderBlockedUsersList();
+    // The currently open chat (if any) needs to reflect a block that
+    // was just added/removed — e.g. on another device — without the
+    // person having to navigate away and back.
+    if (state.mainView === "chat" && state.activeChatUser) {
+      applyChatBlockState();
+    }
+    // Blocked people should disappear from Chats/People immediately too.
+    if (state.activePanelView === "chats") renderChatsList();
+    if (state.activePanelView === "people") runPeopleSearch();
+  });
+}
+
+/* ===================================================================
+   SECTION: ACTION MENU + CONFIRM MODAL (reusable UI)
+   One popover (#actionMenu) and one modal (#confirmModalBackdrop) in
+   index.html, reused everywhere a "⋮ more options" menu or a Remove/
+   Block/Unblock confirmation is needed (profile view, chat header,
+   Settings → Privacy) instead of building bespoke markup per screen.
+=================================================================== */
+
+// Renders `actions` (an array of {label, danger, onSelect}) into the
+// shared popover and positions it near `triggerEl`, clamped to the
+// viewport so it can never render partly off-screen on a small phone.
+function openActionMenu(triggerEl, actions) {
+  const menu = els.actionMenu;
+  if (!menu || !triggerEl) return;
+  menu.innerHTML = actions
+    .map(
+      (a, i) => `
+      <button type="button" class="action-menu__item${a.danger ? " action-menu__item--danger" : ""}" data-index="${i}" role="menuitem">
+        ${escapeHtml(a.label)}
+      </button>
+    `,
+    )
+    .join("");
+  menu.hidden = false;
+  menu.querySelectorAll("[data-index]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const action = actions[Number(btn.getAttribute("data-index"))];
+      closeActionMenu();
+      if (action && action.onSelect) action.onSelect();
+    });
+  });
+
+  // Position after render so menu.offsetWidth/offsetHeight are real.
+  const rect = triggerEl.getBoundingClientRect();
+  const margin = 8;
+  let left = rect.right - menu.offsetWidth;
+  let top = rect.bottom + margin;
+  left = Math.max(margin, Math.min(left, window.innerWidth - menu.offsetWidth - margin));
+  if (top + menu.offsetHeight > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - menu.offsetHeight - margin);
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  triggerEl.setAttribute("aria-expanded", "true");
+  state.actionMenuTrigger = triggerEl;
+}
+
+function closeActionMenu() {
+  const menu = els.actionMenu;
+  if (!menu) return;
+  menu.hidden = true;
+  menu.innerHTML = "";
+  if (state.actionMenuTrigger) {
+    state.actionMenuTrigger.setAttribute("aria-expanded", "false");
+    state.actionMenuTrigger = null;
+  }
+}
+
+// Any click outside the open menu, any Escape press, or the page
+// scrolling/resizing closes it — a popover left open and stale is
+// worse than one that closes a little eagerly.
+document.addEventListener("click", (e) => {
+  if (!els.actionMenu || els.actionMenu.hidden) return;
+  if (els.actionMenu.contains(e.target)) return;
+  if (state.actionMenuTrigger && state.actionMenuTrigger.contains(e.target)) return;
+  closeActionMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeActionMenu();
+});
+window.addEventListener("resize", closeActionMenu);
+window.addEventListener("scroll", closeActionMenu, true);
+
+// Shows the shared confirm modal and resolves `true`/`false` depending
+// on which button (or backdrop/Escape, treated as cancel) the person
+// picks. Every Remove/Block/Unblock action goes through this so none
+// of them can fire without an explicit confirmation, per spec.
+function openConfirmModal({ title, body, confirmLabel, danger = true }) {
+  return new Promise((resolve) => {
+    els.confirmModalTitle.textContent = title;
+    els.confirmModalBody.textContent = body;
+    els.confirmModalCancel.textContent = t("common.cancel");
+    els.confirmModalConfirm.textContent = confirmLabel;
+    els.confirmModalConfirm.className = "btn " + (danger ? "btn--danger" : "btn--primary");
+    els.confirmModalBackdrop.hidden = false;
+
+    const cleanup = (result) => {
+      els.confirmModalBackdrop.hidden = true;
+      els.confirmModalConfirm.removeEventListener("click", onConfirm);
+      els.confirmModalCancel.removeEventListener("click", onCancel);
+      els.confirmModalBackdrop.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKeydown);
+      resolve(result);
+    };
+    const onConfirm = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => {
+      if (e.target === els.confirmModalBackdrop) cleanup(false);
+    };
+    const onKeydown = (e) => {
+      if (e.key === "Escape") cleanup(false);
+    };
+    els.confirmModalConfirm.addEventListener("click", onConfirm);
+    els.confirmModalCancel.addEventListener("click", onCancel);
+    els.confirmModalBackdrop.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKeydown);
+  });
+}
+
+/* ===================================================================
+   SECTION: REMOVE / BLOCK — UI actions
+   These wrap the Firestore calls from the BLOCKING/REMOVE data-layer
+   section above with confirmation, loading/error handling, and
+   keeping whatever's currently on screen in sync.
+=================================================================== */
+
+// Builds the Remove/Block(-or-Unblock) action list for `otherUser`,
+// shared by both the profile-view kebab and the chat-header kebab so
+// the two menus can never drift out of sync with each other.
+function buildPersonActions(otherUser) {
+  const isBlocked = state.myBlockedUids.has(otherUser.uid);
+  const actions = [
+    {
+      label: t("menu.remove"),
+      onSelect: () => confirmAndRemoveConversation(otherUser),
+    },
+  ];
+  if (isBlocked) {
+    actions.push({
+      label: t("menu.unblock"),
+      onSelect: () => confirmAndUnblockUser(otherUser),
+    });
+  } else {
+    actions.push({
+      label: t("menu.block"),
+      danger: true,
+      onSelect: () => confirmAndBlockUser(otherUser),
+    });
+  }
+  return actions;
+}
+
+async function confirmAndRemoveConversation(otherUser) {
+  const me = currentUser();
+  if (!me) return;
+  const confirmed = await openConfirmModal({
+    title: t("confirm.removeTitle"),
+    body: t("confirm.removeBody", { name: otherUser.displayName }),
+    confirmLabel: t("common.remove"),
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  try {
+    await removeConversationForMe(me.uid, otherUser.uid);
+  } catch (e) {
+    console.error("HUM: failed to remove conversation", e);
+    showToast(t("errors.network"), "error");
+    return;
+  }
+
+  showToast(t("toast.chatRemoved"), "success");
+  // If the removed chat is the one currently open, leave it — there's
+  // nothing left to show there for this account.
+  if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(otherUser.username)) {
+    leaveActiveChat();
+  }
+}
+
+async function confirmAndBlockUser(otherUser) {
+  const me = currentUser();
+  if (!me) return;
+  const confirmed = await openConfirmModal({
+    title: t("confirm.blockTitle", { name: otherUser.displayName }),
+    body: t("confirm.blockBody", { name: otherUser.displayName }),
+    confirmLabel: t("common.block"),
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  try {
+    await blockUser(me.uid, otherUser);
+  } catch (e) {
+    console.error("HUM: failed to block user", e);
+    showToast(t("errors.network"), "error");
+    return;
+  }
+
+  // watchBlockedUsers() will also deliver this shortly, but updating
+  // myBlockedUids immediately means the UI (composer, search, chat
+  // list) reflects the block without waiting on the round trip.
+  state.myBlockedUids.add(otherUser.uid);
+  showToast(t("toast.userBlocked", { name: otherUser.displayName }), "success");
+  if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(otherUser.username)) {
+    leaveActiveChat();
+  } else if (state.activePanelView === "chats") {
+    renderChatsList();
+  } else if (state.activePanelView === "people") {
+    runPeopleSearch();
+  }
+}
+
+async function confirmAndUnblockUser(otherUser) {
+  const me = currentUser();
+  if (!me) return;
+  const confirmed = await openConfirmModal({
+    title: t("confirm.unblockTitle", { name: otherUser.displayName }),
+    body: t("confirm.unblockBody", { name: otherUser.displayName }),
+    confirmLabel: t("common.unblock"),
+    danger: false,
+  });
+  if (!confirmed) return;
+
+  try {
+    await unblockUser(me.uid, otherUser.uid);
+  } catch (e) {
+    console.error("HUM: failed to unblock user", e);
+    showToast(t("errors.network"), "error");
+    return;
+  }
+
+  state.myBlockedUids.delete(otherUser.uid);
+  showToast(t("toast.userUnblocked", { name: otherUser.displayName }), "success");
+  if (state.mainView === "chat" && state.activeChatUser && state.activeChatUser.uid === otherUser.uid) {
+    applyChatBlockState();
+  }
+  if (state.mainView === "profileView" && state.viewingUser && state.viewingUser.uid === otherUser.uid) {
+    renderProfileHero(els.mainProfileView, state.viewingUser, false);
+  }
+}
+
+// Leaves whatever chat is currently open and returns to the Chats
+// list — used after Remove/Block make the open conversation no longer
+// something this account should keep looking at.
+function leaveActiveChat() {
+  if (state.unsubChatMessages) {
+    state.unsubChatMessages();
+    state.unsubChatMessages = null;
+  }
+  state.activeChatUsername = null;
+  state.activeChatUser = null;
+  state.chatMessagesData = [];
+  setPanelView("chats");
+  setMainView("welcome");
+  closeMobileDetail();
+}
+
+// Shows/hides the "you've blocked this person" notice and disables the
+// composer for the currently open chat, based on state.myBlockedUids.
+// Called right after openChat() loads a conversation, and again any
+// time the block list itself changes (see startBlockedUsersWatcher)
+// so it can never go stale while a chat stays open.
+function applyChatBlockState() {
+  const other = state.activeChatUser;
+  const blocked = !!(other && state.myBlockedUids.has(other.uid));
+  if (els.chatBlockedNotice) els.chatBlockedNotice.hidden = !blocked;
+  if (els.chatInput) els.chatInput.disabled = blocked;
+  if (els.chatSendBtn) els.chatSendBtn.disabled = blocked;
+  if (blocked && els.chatInput) els.chatInput.value = "";
+}
+
+els.chatBlockedUnblockBtn &&
+  els.chatBlockedUnblockBtn.addEventListener("click", () => {
+    if (state.activeChatUser) confirmAndUnblockUser(state.activeChatUser);
+  });
 
 /* ================= THEME ================= */
 function applyTheme(theme) {
@@ -1694,6 +2530,8 @@ function onAuthSuccess(user, toastMsg) {
   showToast(toastMsg, "success");
   enterApp();
   startConversationsWatcher();
+  startBlockedUsersWatcher();
+  startPresence(user.uid);
 }
 
 async function doLogout() {
@@ -1701,7 +2539,10 @@ async function doLogout() {
   state.mainView = "welcome";
   state.activePanelView = "chats";
   state.viewingUsername = null;
+  state.viewingUser = null;
   state.activeChatUsername = null;
+  state.activeChatUser = null;
+  closeActionMenu();
   els.appShell.hidden = true;
   els.authScreen.hidden = false;
   showAuthTab("login");
@@ -1838,7 +2679,11 @@ async function runPeopleSearch() {
   try {
     const results = await searchUsers(query, me ? usernameDocId(me.username) : null);
     if (myToken !== state.peopleSearchToken) return;
-    renderPeopleResults(els.peopleResults, results, {
+    // Blocked people are excluded from search entirely — they're not
+    // just hidden with a note, they simply don't come up, same as the
+    // signed-in user's own account already doesn't.
+    const visibleResults = results.filter((u) => !state.myBlockedUids.has(u.uid));
+    renderPeopleResults(els.peopleResults, visibleResults, {
       query,
       selectedUsername: state.viewingUsername,
     });
@@ -1881,6 +2726,7 @@ async function openProfileView(username, navigate) {
     return;
   }
   state.viewingUsername = user.username;
+  state.viewingUser = user;
   renderProfileHero(els.mainProfileView, user, false);
   setMainView("profileView");
   runPeopleSearch();
@@ -1888,10 +2734,17 @@ async function openProfileView(username, navigate) {
 }
 
 /* ================= CHAT ================= */
-// The "Message" button lives inside profile-hero markup that gets
-// rebuilt on every render, so its click is handled here via delegation
-// on the stable container instead of being rebound each time.
+// The "Message" button and "⋮" menu both live inside profile-hero
+// markup that gets rebuilt on every render, so their clicks are
+// handled here via delegation on the stable container instead of
+// being rebound each time.
 els.mainProfileView.addEventListener("click", (e) => {
+  const menuBtn = e.target.closest("#btnProfileMenu");
+  if (menuBtn) {
+    e.stopPropagation();
+    if (state.viewingUser) openActionMenu(menuBtn, buildPersonActions(state.viewingUser));
+    return;
+  }
   const btn = e.target.closest("#btnMessageUser");
   if (!btn || !state.viewingUsername) return;
   openChat(state.viewingUsername, true);
@@ -1914,7 +2767,9 @@ async function openChat(username, navigate) {
   }
 
   state.activeChatUsername = other.username;
+  state.activeChatUser = other;
   renderChatHeader(other);
+  applyChatBlockState();
   setMainView("chat");
   if (navigate) openMobileDetail();
   // Clear any leftover draft from a previously open conversation so text
@@ -1974,6 +2829,14 @@ els.chatHeaderInfo.addEventListener("click", () => {
   if (state.activeChatUsername) openProfileView(state.activeChatUsername, true);
 });
 
+// The "⋮" button lives inside the same clickable header, so its click
+// must not also trigger the "jump to profile" handler above.
+els.chatHeaderMenuBtn &&
+  els.chatHeaderMenuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.activeChatUser) openActionMenu(els.chatHeaderMenuBtn, buildPersonActions(state.activeChatUser));
+  });
+
 // Keep in sync with the max-height set on .chat-composer__input in
 // style.css. Resets to "auto" first so shrinking (e.g. after deleting
 // text, or after a message is sent) is measured correctly too, not
@@ -1995,6 +2858,10 @@ function autoSizeChatInput() {
 async function sendChatMessage() {
   const me = currentUser();
   if (!me || !state.activeChatUsername) return;
+  // Extra client-side guard on top of the security rule: the composer
+  // is already disabled while blocked (see applyChatBlockState), this
+  // just makes sure a queued Enter keypress can't slip a send through.
+  if (state.activeChatUser && state.myBlockedUids.has(state.activeChatUser.uid)) return;
   const text = els.chatInput.value.trim();
   if (!text) return;
   const otherUsername = state.activeChatUsername;
@@ -2014,7 +2881,14 @@ async function sendChatMessage() {
     await addMessage(me, other, text);
   } catch (e) {
     console.error("HUM: failed to send message", e);
-    showToast(t("errors.network"), "error");
+    // permission-denied here almost always means the Firestore rules
+    // rejected the write — most commonly because the other person has
+    // blocked this account (or this account has blocked them). Shown
+    // as a generic "couldn't be delivered" message rather than "you've
+    // been blocked", since whether someone blocked you isn't something
+    // HUM reveals to the blocked person.
+    const isPermissionError = e && (e.code === "permission-denied" || /permission/i.test(e.message || ""));
+    showToast(isPermissionError ? t("errors.sendFailed") : t("errors.network"), "error");
     // Restore the draft so the person doesn't lose what they typed.
     els.chatInput.value = text;
     autoSizeChatInput();
@@ -2166,9 +3040,54 @@ function updateSettingsAccountHint(username) {
   els.settingsUsername = document.getElementById("settingsUsername");
 }
 
+// Renders Settings → Privacy → Blocked users from state.blockedUsersRows
+// (kept live by startBlockedUsersWatcher/watchBlockedUsers). Each row's
+// display info is denormalized onto the block doc itself (see
+// blockUser()), so this never needs an extra profile fetch per row.
+function renderBlockedUsersList() {
+  if (!els.settingsBlockedList) return;
+  if (state.blockedUsersLoading) {
+    els.settingsBlockedList.innerHTML = `<div class="blocked-list__empty">${escapeHtml(t("common.loading"))}</div>`;
+    return;
+  }
+  const rows = state.blockedUsersRows || [];
+  if (!rows.length) {
+    els.settingsBlockedList.innerHTML = `<div class="blocked-list__empty">${escapeHtml(t("settings.blockedUsersEmpty"))}</div>`;
+    return;
+  }
+  els.settingsBlockedList.innerHTML = rows
+    .map((row) => {
+      const displayUser = { username: row.blockedUsername, displayName: row.blockedDisplayName, avatar: row.blockedAvatar };
+      return `
+        <div class="result-row" data-blocked-uid="${escapeHtml(row.blockedUid)}">
+          <div class="avatar" style="background:${avatarBg(displayUser)}">${avatarMarkup(displayUser)}</div>
+          <div class="result-row__info">
+            <div class="result-row__name">${escapeHtml(row.blockedDisplayName)}</div>
+            <div class="result-row__handle">@${escapeHtml(row.blockedUsername)}</div>
+          </div>
+          <button type="button" class="btn btn--ghost btn--small" data-action="unblock" data-uid="${escapeHtml(row.blockedUid)}" data-username="${escapeHtml(row.blockedUsername)}" data-name="${escapeHtml(row.blockedDisplayName)}">
+            ${escapeHtml(t("common.unblock"))}
+          </button>
+        </div>
+      `;
+    })
+    .join("");
+}
+els.settingsBlockedList &&
+  els.settingsBlockedList.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-action="unblock"]');
+    if (!btn) return;
+    confirmAndUnblockUser({
+      uid: btn.getAttribute("data-uid"),
+      username: btn.getAttribute("data-username"),
+      displayName: btn.getAttribute("data-name"),
+    });
+  });
+
 function openSettings() {
   const me = currentUser();
   if (me) updateSettingsAccountHint(me.username);
+  renderBlockedUsersList();
   setMainView("settings");
 }
 els.navSettings.addEventListener("click", () => {
@@ -2291,6 +3210,8 @@ if (!FIREBASE_CONFIG_ERROR) {
       state.authReady = true;
       enterApp();
       startConversationsWatcher();
+      startBlockedUsersWatcher();
+      startPresence(user.uid);
     } catch (e) {
       console.error("HUM: failed to load or recover profile for existing session", e);
       state.authReady = true;
