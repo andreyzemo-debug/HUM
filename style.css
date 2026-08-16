@@ -445,6 +445,10 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .chat-header__info{min-width:0;}
 .chat-header__name{font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .chat-header__handle{font-family:var(--font-mono);font-size:12px;color:var(--text-faint);}
+/* Typing indicator reuses this same element (see applyTypingIndicatorUI
+   in app.js) instead of adding new markup — just a color/weight swap,
+   no layout change. */
+.chat-header__handle--typing{color:var(--accent);font-style:italic;}
 
 .chat-messages{
   flex:1;min-height:0;overflow-y:auto;padding:24px 40px;

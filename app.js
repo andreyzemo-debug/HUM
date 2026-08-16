@@ -184,7 +184,10 @@
 //      from Firestore, separate console tab, separate rules language —
 //      see the PRESENCE section further down for why online/offline
 //      status specifically needs Realtime Database's onDisconnect()
-//      instead of anything Firestore offers):
+//      instead of anything Firestore offers; the TYPING section below
+//      it reuses the exact same connection for a second, independent
+//      purpose — typing/{conversationId}/{uid} — hence the second
+//      top-level key here):
 //        {
 //          "rules": {
 //            "presence": {
@@ -192,6 +195,15 @@
 //                ".read": "auth != null",
 //                ".write": "auth != null && auth.uid === $uid",
 //                ".validate": "newData.hasChildren(['state','lastChanged']) && (newData.child('state').val() === 'online' || newData.child('state').val() === 'offline')"
+//              }
+//            },
+//            "typing": {
+//              "$convId": {
+//                "$uid": {
+//                  ".read": "auth != null",
+//                  ".write": "auth != null && auth.uid === $uid",
+//                  ".validate": "newData.val() === true"
+//                }
 //              }
 //            }
 //          }
@@ -205,11 +217,21 @@
 //      language. .validate rejects anything that isn't exactly the
 //      {state, lastChanged} shape this file writes — a value can't be
 //      pointed anywhere in the tree except a well-formed presence
-//      entry. Nothing here is public/world-writable, and nothing
-//      outside presence/ is reachable at all: nothing else in this
-//      project uses Realtime Database, and paths with no matching rule
-//      default to fully denied in Realtime Database, same as
-//      Firestore.)
+//      entry. The typing/ block is the identical read-any/write-own-
+//      uid-only shape, just one level deeper (per conversation): any
+//      authenticated user can read who's typing in any conversation —
+//      the same posture presence already has, and typing never carries
+//      more information than presence does (a boolean, not message
+//      content) — but a write can only ever land at
+//      typing/{convId}/{THEIR OWN uid}, never anyone else's, and
+//      .validate only accepts the literal value `true` (this file
+//      clears a typing flag by deleting the node entirely — writing
+//      `null` — never by writing `false`, so nothing else needs to be
+//      a valid write). Nothing here is public/world-writable, and
+//      nothing outside presence/ and typing/ is reachable at all:
+//      nothing else in this project uses Realtime Database, and paths
+//      with no matching rule default to fully denied in Realtime
+//      Database, same as Firestore.)
 // ===================================================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
@@ -547,6 +569,169 @@ function watchPresenceForScope(scope, uid, container){
   const list = presenceWatchersByScope.get(scope) || [];
   list.push({ uid, unsub });
   presenceWatchersByScope.set(scope, list);
+}
+
+/* ===================================================================
+   SECTION: TYPING INDICATOR (Realtime Database)
+   A second, independent use of Realtime Database alongside presence
+   (same `rtdb` connection, no second Firebase app/database) — typing
+   state lives at typing/{conversationId}/{uid}: true, using the exact
+   same conversationId(uidA, uidB) pairing already used for Firestore
+   conversations/messages, so it needs no new ID scheme. Nothing here
+   touches presence/{uid} or any Firestore data; the two systems don't
+   share state, only the same underlying connection.
+
+   Two halves, mirroring the presence section above:
+     - PUBLISHING: the signed-in user's own "I'm typing" flag —
+       driven by the composer's input event (see the chatInput
+       listener further down) and a short inactivity timeout, always
+       written through setTypingState()/stopMyTyping() so the
+       inactivity timer is only ever what decides WHEN to clear it,
+       never a substitute for the real Realtime Database write.
+     - SUBSCRIBING: startTypingWatcher(convId, otherUid) — watches
+       ONLY the other participant's node (never the signed-in user's
+       own) and live-swaps the existing chatHeaderHandle text between
+       "@username" and the translated "typing…" string.
+=================================================================== */
+
+function typingRef(convId, uid){
+  return rtdbRef(rtdb, `typing/${convId}/${uid}`);
+}
+
+// Writes (or clears, via null) the signed-in user's own typing flag for
+// one conversation. Never used to write anyone else's node — every
+// call site below passes currentUser().uid, and the Realtime Database
+// rules enforce that server-side regardless.
+async function setTypingState(convId, uid, isTyping){
+  if(!rtdb || !convId || !uid) return;
+  try {
+    await rtdbSet(typingRef(convId, uid), isTyping ? true : null);
+  } catch(e){
+    console.error('HUM: failed to update typing state', e);
+  }
+}
+
+// Live-subscribes to whether `otherUid` is typing in `convId`. Treats
+// anything other than an explicit `true` (missing node, null, stale
+// data) as "not typing" — same not-a-guess posture as watchPresence().
+// Returns an unsubscribe function (a no-op one if Realtime Database
+// isn't available).
+function watchTyping(convId, otherUid, onChange){
+  if(!rtdb || !convId || !otherUid){
+    onChange(false);
+    return () => {};
+  }
+  return onValue(typingRef(convId, otherUid), (snap) => {
+    onChange(snap.val() === true);
+  }, (err) => {
+    console.error('HUM: typing listener failed', err);
+    onChange(false);
+  });
+}
+
+// Debounce timer that auto-clears the signed-in user's own typing flag
+// after a short pause (see handleComposerTypingInput below) — this
+// timer only ever decides WHEN to call setTypingState(false); the
+// actual "not typing" fact is still a real Realtime Database write,
+// same as everywhere else in this section.
+let typingHideTimer = null;
+// Which conversation the signed-in user's own typing flag is currently
+// set "true" in, if any — lets stopMyTyping() clear exactly that node
+// (e.g. the PREVIOUS conversation, right as openChat() switches to a
+// new one) without needing to already know which chat is closing.
+let typingConvId = null;
+// The live listener on the OTHER participant's typing node for
+// whichever conversation is currently open (see startTypingWatcher/
+// stopTypingWatcher, wired into openChat/leaveActiveChat/logout below).
+let typingWatchUnsub = null;
+
+const TYPING_INACTIVITY_MS = 1500;
+
+// Reflects `isTyping` in the existing chat header — swaps
+// chatHeaderHandle between the normal "@username" and the translated
+// "typing…" string. Reuses that element instead of adding new markup,
+// per "without redesigning the UI"; a subtle style hook
+// (.chat-header__handle--typing) exists purely for a color/italic
+// treatment, no layout change.
+function applyTypingIndicatorUI(isTyping){
+  if(!els.chatHeaderHandle || !state.activeChatUser) return;
+  els.chatHeaderHandle.classList.toggle('chat-header__handle--typing', isTyping);
+  els.chatHeaderHandle.textContent = isTyping
+    ? t('chat.typingIndicator')
+    : '@' + state.activeChatUser.username;
+}
+
+// Starts watching `otherUid`'s typing state for `convId` — called from
+// openChat() once the conversation being opened is known. Always tears
+// down whatever watcher was previously running first (see
+// stopTypingWatcher), so switching chats can never leave two watchers
+// (old + new) live at once.
+function startTypingWatcher(convId, otherUid){
+  stopTypingWatcher();
+  typingWatchUnsub = watchTyping(convId, otherUid, applyTypingIndicatorUI);
+}
+
+// Detaches the "watching the other participant" listener (does NOT
+// touch the signed-in user's OWN typing flag — that's stopMyTyping()).
+// Also resets the header back to normal so a stale "typing…" can never
+// linger once nobody is watching anything to correct it.
+function stopTypingWatcher(){
+  if(typingWatchUnsub){
+    typingWatchUnsub();
+    typingWatchUnsub = null;
+  }
+  applyTypingIndicatorUI(false);
+}
+
+// Clears the signed-in user's own "I'm typing" flag, if any is
+// currently set — cancels the inactivity timeout and writes
+// typing/{convId}/{uid} back to absent. Returns the underlying
+// Realtime Database write's promise so a caller that needs the clear
+// to actually land before something else happens (logging out, which
+// invalidates the write's permission once signOut() completes) can
+// await it; every other call site just fires it and moves on.
+function stopMyTyping(){
+  if(typingHideTimer){
+    clearTimeout(typingHideTimer);
+    typingHideTimer = null;
+  }
+  if(!typingConvId) return Promise.resolve();
+  const convId = typingConvId;
+  typingConvId = null;
+  const me = currentUser();
+  if(!me) return Promise.resolve();
+  return setTypingState(convId, me.uid, false);
+}
+
+// Wired to the composer's `input` event (see the chatInput listener
+// further down, alongside the existing autoSizeChatInput one). Turns
+// raw keystrokes into the typing/{convId}/{uid} writes described in
+// the section comment above: typing something sets the flag true and
+// (re)arms a short inactivity timeout that clears it; clearing the box
+// entirely clears the flag immediately, no timeout needed.
+function handleComposerTypingInput(){
+  const me = currentUser();
+  if(!me || !state.activeChatUser || !els.chatInput) return;
+  const convId = conversationId(me.uid, state.activeChatUser.uid);
+  const hasText = els.chatInput.value.trim().length > 0;
+
+  if(typingHideTimer){
+    clearTimeout(typingHideTimer);
+    typingHideTimer = null;
+  }
+
+  if(hasText){
+    typingConvId = convId;
+    setTypingState(convId, me.uid, true);
+    typingHideTimer = setTimeout(() => {
+      typingHideTimer = null;
+      typingConvId = null;
+      setTypingState(convId, me.uid, false);
+    }, TYPING_INACTIVITY_MS);
+  } else {
+    typingConvId = null;
+    setTypingState(convId, me.uid, false);
+  }
 }
 
 /* ===================================================================
@@ -975,7 +1160,8 @@ const translations = {
     },
     chat:{
       emptyTitle:'Start the conversation', inputPlaceholder:'Message', send:'Send',
-      youPrefix:'You: ', blockedNotice:"You've blocked this person."
+      youPrefix:'You: ', blockedNotice:"You've blocked this person.",
+      typingIndicator:'Typing...'
     },
     menu:{
       remove:'Remove', block:'Block', unblock:'Unblock'
@@ -1074,7 +1260,8 @@ const translations = {
     },
     chat:{
       emptyTitle:'Начните разговор', inputPlaceholder:'Сообщение', send:'Отправить',
-      youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.'
+      youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.',
+      typingIndicator:'Печатает...'
     },
     menu:{
       remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать'
@@ -1173,7 +1360,8 @@ const translations = {
     },
     chat:{
       emptyTitle:'Suhbatni boshlang', inputPlaceholder:'Xabar', send:'Yuborish',
-      youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.'
+      youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.',
+      typingIndicator:'Yozmoqda...'
     },
     menu:{
       remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish'
@@ -1482,13 +1670,16 @@ async function loginUser({ username, password }){
 
 async function logoutUser(){
   requireFirebaseConfig();
-  // Mark presence offline BEFORE signing out (and before
-  // stopAllConversationWatchers, which is what actually tears down the
-  // .info/connected listener) — signOut() invalidates the ID token, and
-  // the Realtime Database rules require a still-valid auth.uid to allow
-  // writing presence/{uid}, so this has to happen while still signed in.
+  // Mark presence offline, and clear any "I'm typing" flag, BEFORE
+  // signing out (and before stopAllConversationWatchers, which is what
+  // actually tears down the .info/connected and "watching the other
+  // participant's typing" listeners) — signOut() invalidates the ID
+  // token, and the Realtime Database rules require a still-valid
+  // auth.uid to allow writing presence/{uid} or typing/{convId}/{uid},
+  // so both have to happen while still signed in.
   if(state.me){
     await goOfflineNow(state.me.uid);
+    await stopMyTyping();
   }
   stopAllConversationWatchers();
   await signOut(auth).catch(() => {});
@@ -1963,6 +2154,11 @@ function stopAllConversationWatchers(){
   // updating once nobody is signed in on this device.
   stopPresenceListener();
   ['chatsList', 'peopleResults', 'profileView', 'chatHeader'].forEach(clearPresenceWatchers);
+  // Same idea for the typing indicator: stop watching whoever's typing
+  // state was being shown in the (now closing) chat header. Clearing
+  // the signed-in user's OWN typing flag is handled separately by
+  // logoutUser() (it needs to be awaited before signOut()), not here.
+  stopTypingWatcher();
 }
 
 // Starts (or restarts) the live "who am I talking to, and what did
@@ -2259,6 +2455,12 @@ function leaveActiveChat() {
     state.unsubChatMessages();
     state.unsubChatMessages = null;
   }
+  // Typing indicator: leaving the chat entirely is the same "stop
+  // watching / stop publishing" cleanup as switching chats (see
+  // openChat), there's just no new conversation to start watching
+  // afterwards.
+  stopMyTyping();
+  stopTypingWatcher();
   state.activeChatUsername = null;
   state.activeChatUser = null;
   state.chatMessagesData = [];
@@ -2279,6 +2481,10 @@ function applyChatBlockState() {
   if (els.chatInput) els.chatInput.disabled = blocked;
   if (els.chatSendBtn) els.chatSendBtn.disabled = blocked;
   if (blocked && els.chatInput) els.chatInput.value = "";
+  // A disabled composer can no longer fire "input" events, so nothing
+  // would otherwise clear a typing flag left over from just before the
+  // block took effect — clear it explicitly here too.
+  if (blocked) stopMyTyping();
 }
 
 els.chatBlockedUnblockBtn &&
@@ -2777,6 +2983,17 @@ async function openChat(username, navigate) {
   if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
 
+  // Typing indicator: clear the signed-in user's own "typing" flag in
+  // whichever conversation was open before this one (stopMyTyping()
+  // already knows which, via typingConvId — see the TYPING section),
+  // then swap the "watching the other participant" listener over to
+  // this new conversation instead of the old one. renderChatHeader()
+  // above already set the header to the plain "@username" for the
+  // person being opened; this may immediately override it with
+  // "typing…" if they happen to already be mid-message.
+  stopMyTyping();
+  startTypingWatcher(conversationId(me.uid, other.uid), other.uid);
+
   // Make sure the conversation document itself exists BEFORE watching
   // its messages subcollection. This matters for the very first time
   // two people open a chat with each other (no messages sent yet): the
@@ -2873,6 +3090,11 @@ async function sendChatMessage() {
   // so there's no separate "add it locally too" step to keep in sync.
   els.chatInput.value = "";
   autoSizeChatInput();
+  // Setting .value directly (as opposed to the person deleting text
+  // themselves) doesn't fire an "input" event, so the typing flag has
+  // to be cleared explicitly here too — otherwise it would just sit
+  // "true" until the inactivity timeout eventually caught up.
+  stopMyTyping();
 
   let other;
   try {
@@ -2900,6 +3122,7 @@ els.chatComposerForm.addEventListener("submit", (e) => {
   sendChatMessage();
 });
 els.chatInput.addEventListener("input", autoSizeChatInput);
+els.chatInput.addEventListener("input", handleComposerTypingInput);
 els.chatInput.addEventListener("keydown", (e) => {
   // Enter sends the message; Shift+Enter inserts a newline as normal.
   if (e.key === "Enter" && !e.shiftKey) {
