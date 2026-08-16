@@ -469,7 +469,12 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   word-break:break-word;white-space:pre-wrap;
 }
 .chat-msg--own .chat-msg__bubble{background:var(--accent);color:#0d0f14;border-color:transparent;}
-.chat-msg__time{font-size:11px;color:var(--text-faint);margin-top:4px;padding:0 2px;}
+.chat-msg__time{font-size:11px;color:var(--text-faint);margin-top:4px;padding:0 2px;display:inline-flex;align-items:center;gap:4px;}
+/* Read receipts reuse this same meta line (see renderChatMessages in
+   app.js) — no new bubble element, just an inline mark after the
+   timestamp, own messages only. */
+.chat-msg__receipt{font-size:11px;letter-spacing:-1px;color:var(--text-faint);}
+.chat-msg__receipt--read{color:var(--accent);letter-spacing:normal;}
 
 /* Composer: input and send button share --composer-h so they always
    line up exactly, at every breakpoint (see the --composer-h override

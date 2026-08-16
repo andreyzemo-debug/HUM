@@ -47,9 +47,10 @@
 //      apply it for you, and "Missing or insufficient permissions" on
 //      any read/write/listener means these rules aren't live yet, or
 //      don't match what's below). This version adds the "blocked/"
-//      subcollection under each user and a block-aware check on who's
-//      allowed to CREATE a message — everything else is unchanged from
-//      before:
+//      subcollection under each user, a block-aware check on who's
+//      allowed to CREATE a message, and a narrow message UPDATE rule
+//      for read receipts (see readAt below) — everything else is
+//      unchanged from before:
 //        rules_version = '2';
 //        service cloud.firestore {
 //          match /databases/{database}/documents {
@@ -145,7 +146,25 @@
 //                  && request.auth.uid in conversationDoc(convId).data.participants
 //                  && request.resource.data.from == request.auth.uid
 //                  && !isBlockedPair(request.auth.uid, otherParticipant(convId, request.auth.uid));
-//                allow update, delete: if false;
+//                // Read receipts: the ONLY update any message doc can
+//                // ever receive, and only from the RECIPIENT (never
+//                // the sender — this is what stops a sender from
+//                // forging their own "read" state). `from`/`text`/`ts`
+//                // must come through byte-for-byte unchanged, and
+//                // .affectedKeys().hasOnly(['readAt']) means readAt is
+//                // structurally the only field this request is even
+//                // allowed to touch — there's no way to smuggle any
+//                // other change in alongside it.
+//                allow update: if isSignedIn()
+//                  && exists(/databases/$(database)/documents/conversations/$(convId))
+//                  && request.auth.uid in conversationDoc(convId).data.participants
+//                  && request.auth.uid != resource.data.from
+//                  && request.resource.data.from == resource.data.from
+//                  && request.resource.data.text == resource.data.text
+//                  && request.resource.data.ts == resource.data.ts
+//                  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
+//                  && request.resource.data.readAt is string;
+//                allow delete: if false;
 //              }
 //            }
 //          }
@@ -178,7 +197,15 @@
 //          person `uid` has blocked. Denormalized display fields exist
 //          so Settings → Privacy → Blocked users can render the list
 //          without extra profile reads, the same pattern conversations
-//          already use for participantsInfo.)
+//          already use for participantsInfo.
+//        - conversations/{convId}/messages/{msgId}.readAt: string ISO
+//          timestamp, absent until the RECIPIENT has actually opened
+//          the conversation and seen that message (see markMessagesRead
+//          in app.js) — never present on messages the signed-in user
+//          sent themselves. Older messages written before this field
+//          existed simply don't have it, which is indistinguishable
+//          from "not read yet" and is treated exactly the same way —
+//          nothing needs a one-time migration.)
 //
 //   6. Realtime Database → Rules, paste EXACTLY this (separate product
 //      from Firestore, separate console tab, separate rules language —
@@ -261,6 +288,7 @@ import {
   onSnapshot,
   arrayUnion,
   arrayRemove,
+  writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 import {
@@ -949,17 +977,54 @@ async function addMessage(meUser, otherUser, text){
 // onChange(messages) every time the subcollection changes (including
 // the very first load) so the open chat updates the moment the other
 // person replies, on any device. Returns an unsubscribe function.
-// uidA/uidB are Firebase Auth UIDs (see conversationId above).
+// uidA/uidB are Firebase Auth UIDs (see conversationId above). Each
+// message object includes `id` (the Firestore doc ID, not part of the
+// stored data itself) — read receipts need it to write readAt back to
+// the exact right doc; nothing about existing rendering breaks by its
+// presence, since renderChatMessages() only ever reads the fields it
+// already knew about.
 function watchConversationMessages(uidA, uidB, onChange){
   requireFirebaseConfig();
   const convId = conversationId(uidA, uidB);
   const q = fbQuery(collection(db, 'conversations', convId, 'messages'), orderBy('ts', 'asc'));
   return onSnapshot(q, (snap) => {
-    onChange(snap.docs.map(d => d.data()));
+    onChange(snap.docs.map(d => ({ ...d.data(), id: d.id })));
   }, (err) => {
     console.error('HUM: message listener failed', err);
     onChange(null, err);
   });
+}
+
+// Marks any of `messages` that were sent BY otherUid (i.e., incoming to
+// meUid) and don't already have readAt as read — a single batched
+// write covers however many unread messages just loaded/arrived at
+// once, rather than one round trip per message. Deliberately narrow:
+// - Only ever touches messages `from` the OTHER participant — a
+//   message meUid sent themselves is never modified here, matching
+//   "messages sent by User B themselves should not be modified."
+// - Skips anything that already has readAt, so re-running this against
+//   messages that haven't actually changed (e.g. the live listener
+//   firing again after ITS OWN read-receipt write lands) is always a
+//   safe no-op — no repeat writes, and no infinite update loop, since
+//   the next snapshot simply won't contain any newly-unread messages.
+// - Every write goes through the Firestore rule above, which already
+//   independently enforces "only the recipient may set readAt" — this
+//   function just avoids attempting writes that rule would reject
+//   anyway (e.g. it never tries to mark meUid's own messages read).
+async function markMessagesRead(meUid, otherUid, convId, messages){
+  requireFirebaseConfig();
+  const unread = (messages || []).filter((m) => m.from === otherUid && !m.readAt && m.id);
+  if(!unread.length) return;
+  const readAt = new Date().toISOString();
+  const batch = writeBatch(db);
+  unread.forEach((m) => {
+    batch.update(doc(db, 'conversations', convId, 'messages', m.id), { readAt });
+  });
+  try {
+    await batch.commit();
+  } catch(e){
+    console.error('HUM: failed to mark messages as read', e);
+  }
 }
 
 // Live-subscribes to this user's conversation list, most recently
@@ -1161,7 +1226,8 @@ const translations = {
     chat:{
       emptyTitle:'Start the conversation', inputPlaceholder:'Message', send:'Send',
       youPrefix:'You: ', blockedNotice:"You've blocked this person.",
-      typingIndicator:'Typing...'
+      typingIndicator:'Typing...',
+      receiptSent:'Sent', receiptRead:'Read'
     },
     menu:{
       remove:'Remove', block:'Block', unblock:'Unblock'
@@ -1261,7 +1327,8 @@ const translations = {
     chat:{
       emptyTitle:'Начните разговор', inputPlaceholder:'Сообщение', send:'Отправить',
       youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.',
-      typingIndicator:'Печатает...'
+      typingIndicator:'Печатает...',
+      receiptSent:'Отправлено', receiptRead:'Прочитано'
     },
     menu:{
       remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать'
@@ -1361,7 +1428,8 @@ const translations = {
     chat:{
       emptyTitle:'Suhbatni boshlang', inputPlaceholder:'Xabar', send:'Yuborish',
       youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.',
-      typingIndicator:'Yozmoqda...'
+      typingIndicator:'Yozmoqda...',
+      receiptSent:'Yuborildi', receiptRead:'Oʻqildi'
     },
     menu:{
       remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish'
@@ -1998,10 +2066,19 @@ function renderChatMessages(){
   els.chatMessages.innerHTML = messages
     .map((m) => {
       const isOwn = m.from === me.uid;
+      // Read receipts only ever apply to messages the signed-in user
+      // sent themselves — an incoming message never shows a
+      // ✓/✓✓ mark. `m.readAt` being missing (older messages written
+      // before this field existed, or simply "not read yet") is
+      // treated the same as explicitly unread — see markMessagesRead
+      // and the readAt schema note at the top of this file.
+      const receiptMarkup = isOwn
+        ? `<span class="chat-msg__receipt${m.readAt ? ' chat-msg__receipt--read' : ''}" title="${escapeHtml(t(m.readAt ? 'chat.receiptRead' : 'chat.receiptSent'))}">${m.readAt ? '✓✓' : '✓'}</span>`
+        : '';
       return `
         <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}">
           <div class="chat-msg__bubble">${escapeHtml(m.text)}</div>
-          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}</div>
+          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}</div>
         </div>
       `;
     })
@@ -2983,6 +3060,11 @@ async function openChat(username, navigate) {
   if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
 
+  // Deterministic from the pair of UIDs (see conversationId above) —
+  // computed once here and reused below for both the typing watcher and
+  // read receipts, instead of each recomputing it separately.
+  const convId = conversationId(me.uid, other.uid);
+
   // Typing indicator: clear the signed-in user's own "typing" flag in
   // whichever conversation was open before this one (stopMyTyping()
   // already knows which, via typingConvId — see the TYPING section),
@@ -2992,7 +3074,7 @@ async function openChat(username, navigate) {
   // person being opened; this may immediately override it with
   // "typing…" if they happen to already be mid-message.
   stopMyTyping();
-  startTypingWatcher(conversationId(me.uid, other.uid), other.uid);
+  startTypingWatcher(convId, other.uid);
 
   // Make sure the conversation document itself exists BEFORE watching
   // its messages subcollection. This matters for the very first time
@@ -3035,6 +3117,13 @@ async function openChat(username, navigate) {
     // since navigated away from landing on the wrong screen.
     if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(watchedUsername)) {
       renderChatMessages();
+      // Read receipts: this fires for BOTH the initial load and every
+      // subsequent live update (a new incoming message arriving while
+      // the chat stays open included) — exactly the two moments the
+      // feature needs to mark things read. Fire-and-forget: nothing in
+      // the UI needs to wait on this write, and markMessagesRead()
+      // itself is a safe no-op if there's nothing new to mark.
+      if (!err) markMessagesRead(me.uid, other.uid, convId, messages);
     }
   });
 }
