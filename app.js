@@ -266,7 +266,7 @@ import {
   getAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  updateEmail,
+  updateProfile as fbUpdateAuthProfile,
   signOut,
   onAuthStateChanged,
   setPersistence,
@@ -802,9 +802,12 @@ function hasStoredLang(){
    SECTION: USERS (Firestore)
    Each user's document lives at users/{uid} — the Firebase Auth UID
    is the permanent account identity, since (unlike username) it never
-   changes and is never reused. Username is still unique (enforced via
-   Firebase Auth's synthetic per-username email — see emailForUsername)
-   and still how people search for and look up other users, but it's
+   changes and is never reused. Username is still unique — enforced via
+   Firebase Auth's synthetic per-username email at registration (see
+   emailForUsername) and via a direct Firestore lookup on username
+   *changes* (see updateProfile below; changing username never touches
+   Auth or its email) — and still how people search for and look up
+   other users, but it's
    just a field on the document now, not the document's address. This
    is what makes a username change a plain field update instead of a
    delete-and-recreate of the whole document — and what makes "the Auth
@@ -1780,23 +1783,34 @@ async function updateProfile(updates){
   const usernameChanged = usernameDocId(nextUsername) !== usernameDocId(user.username);
   const nextLower = usernameDocId(nextUsername);
 
-  // Changing the username means changing the Firebase Auth email it
-  // maps to, which Firebase itself rejects with auth/email-already-in-use
-  // if another account already has it — the same uniqueness check the
-  // rest of the app relies on, so there's nothing extra to pre-check
-  // here. It can also ask for a fresh login (auth/requires-recent-login)
-  // if the session is old, which is surfaced as a plain form error
-  // rather than a crash.
+  // Username uniqueness used to be enforced for free by Firebase Auth's
+  // email-already-in-use check, back when a username change also
+  // changed the synthetic Auth email it maps to. It no longer touches
+  // Auth at all (see below), so uniqueness is now checked directly
+  // against Firestore instead — the same lookup People Search uses.
   if(usernameChanged){
     try{
-      await updateEmail(auth.currentUser, emailForUsername(nextLower));
-    }catch(e){
-      if(e.code === 'auth/email-already-in-use'){
+      const existing = await findUserByUsername(nextLower);
+      if(existing && existing.uid !== user.uid){
         return { ok:false, errors:{ username: t('auth.validation.usernameTaken') } };
       }
-      if(e.code === 'auth/requires-recent-login'){
-        return { ok:false, errors:{ form: t('errors.requiresRecentLogin') } };
-      }
+    }catch(e){
+      return { ok:false, errors:{ form: t('errors.network') } };
+    }
+  }
+
+  // Display name is the one piece of this form Firebase Auth itself
+  // tracks (auth.currentUser.displayName), so it's kept in sync via
+  // Auth's own updateProfile() — never updateEmail(). Username/
+  // usernameLower are a Firestore-only concept (see usernameDocId /
+  // emailForUsername above) and must NEVER be sent to Firebase Auth as
+  // an email change: that's the bug this replaces. The user's Auth
+  // email is not read, referenced, or written anywhere in this
+  // function, on purpose.
+  if(nextDisplayName !== user.displayName){
+    try{
+      await fbUpdateAuthProfile(auth.currentUser, { displayName: nextDisplayName });
+    }catch(e){
       return { ok:false, errors:{ form: t('errors.network') } };
     }
   }
