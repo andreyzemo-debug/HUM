@@ -205,7 +205,19 @@
 //          sent themselves. Older messages written before this field
 //          existed simply don't have it, which is indistinguishable
 //          from "not read yet" and is treated exactly the same way —
-//          nothing needs a one-time migration.)
+//          nothing needs a one-time migration.
+//        - conversations/{convId}/messages/{msgId} may also carry
+//          { type: 'voice', voicePath, voiceMimeType, voiceDuration }
+//          instead of ordinary text (text stays '' on these — see
+//          sendVoiceMessage in app.js). No rule change was needed for
+//          this: the create rule above already allows a message to
+//          carry whatever fields request.resource.data has as long as
+//          `from` and the block check pass, and the update rule (read
+//          receipts) only constrains from/text/ts staying identical —
+//          text on a voice message is '' both before and after a
+//          read-receipt update, so that already holds. The actual
+//          audio bytes never touch Firestore at all — they live in
+//          Supabase Storage; voicePath is only ever a pointer to them.)
 //
 //   6. Realtime Database → Rules, paste EXACTLY this (separate product
 //      from Firestore, separate console tab, separate rules language —
@@ -266,7 +278,7 @@ import {
   getAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  updateProfile as fbUpdateAuthProfile,
+  updateEmail,
   signOut,
   onAuthStateChanged,
   setPersistence,
@@ -299,6 +311,16 @@ import {
   onDisconnect,
   serverTimestamp as rtdbServerTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
+
+// Supabase — used ONLY for voice-message audio file storage (see the
+// SUPABASE VOICE STORAGE section further down). Firestore/Realtime
+// Database above remain HUM's actual backend for everything else;
+// nothing here reads or writes anything except blobs in the
+// `voice-messages` bucket. esm.sh serves a real ESM build, so this
+// works the same "just an <script type=module> import, no bundler" way
+// every Firebase import above does — no new <script> tag, no build
+// step, no second app architecture.
+import { createClient as createSupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Replace with YOUR OWN Firebase project's config (see setup steps
 // above). Every device that opens HUM with this same config is talking
@@ -417,6 +439,83 @@ if(!FIREBASE_CONFIG_ERROR){
   // decides whether to show the auth screen or go straight into the app
   // on load).
   setPersistence(auth, browserLocalPersistence).catch(() => {});
+}
+
+/* ===================================================================
+   SUPABASE VOICE STORAGE (config + client)
+   Firebase Auth/Firestore/Realtime Database remain HUM's actual
+   backend for everything — accounts, conversations, messages,
+   presence, typing, read receipts, all of it. Supabase is added here
+   for exactly ONE thing: storing the audio file behind a voice
+   message (see the VOICE MESSAGES section further down). Firestore
+   still stores the message document itself (from/ts/type/voicePath/…,
+   see addMessage), same as every other message — only the audio bytes
+   live in Supabase Storage.
+
+   Fill these in from your Supabase project → Settings → API. Only the
+   public anon key belongs here — NEVER the service-role key, which
+   bypasses Row Level Security entirely and must never reach the
+   browser.
+=================================================================== */
+const SUPABASE_URL = "https://hhszykwqoihrmhezaflf.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_oK6aucnFxyzHUb38rrAsJw_y6cEBhhU";
+const VOICE_BUCKET = "voice-messages";
+
+const SUPABASE_CONFIGURED =
+  !!SUPABASE_URL && !!SUPABASE_ANON_KEY &&
+  !SUPABASE_URL.includes("YOUR_SUPABASE") && !SUPABASE_ANON_KEY.includes("YOUR_SUPABASE");
+
+// Wrapped in try/catch for the same reason `rtdb`'s init is above: this
+// whole file is one module, so letting a Supabase init error escape
+// here would take down HUM entirely over a voice-message-only config
+// problem. `supabase` stays null in that case; every voice-message
+// function below already checks for that and fails toward "voice
+// messages are unavailable" rather than crashing anything else.
+let supabase = null;
+if(SUPABASE_CONFIGURED){
+  try {
+    supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch(e){
+    console.error("[HUM] Supabase failed to initialize (voice messages will be unavailable):", e);
+  }
+} else {
+  console.warn("[HUM] Supabase is not configured — voice messages are disabled until SUPABASE_URL/SUPABASE_ANON_KEY are filled in above.");
+}
+
+// Your `voice-messages` bucket's policies ("authenticated users" for
+// INSERT/SELECT) check SUPABASE's own auth state — a Supabase-issued
+// JWT with role "authenticated" — not Firebase's. HUM's actual sign-in
+// stays 100% Firebase (this never touches a Firebase credential and
+// doesn't add a second user-facing auth system); it just means a
+// browser that's only ever signed into Firebase still looks like the
+// anonymous `anon` role to Supabase, which your policies don't grant
+// storage access to. The standard, secure way to satisfy "Supabase
+// sees this request as authenticated" using ONLY the public anon key —
+// no service-role key, no separate signup/login flow, nothing visible
+// to the HUM user — is one silent anonymous Supabase sign-in per
+// browser session, done here before the first storage call.
+// REQUIRES a one-time setting in Supabase: Authentication → Sign In /
+// Providers → enable "Allow anonymous sign-ins". Without that toggled
+// on, every upload/playback below will fail even with a correct URL
+// and anon key, since there'd be nothing for this to sign in AS.
+let supabaseAuthReady = null;
+function ensureSupabaseAuth(){
+  if(!supabase) return Promise.resolve(false);
+  if(supabaseAuthReady) return supabaseAuthReady;
+  supabaseAuthReady = (async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if(data && data.session) return true;
+      const { error } = await supabase.auth.signInAnonymously();
+      if(error) throw error;
+      return true;
+    } catch(e){
+      console.error("[HUM] Supabase anonymous sign-in failed (voice messages will be unavailable):", e);
+      supabaseAuthReady = null; // let the next attempt retry instead of staying stuck on one failure
+      return false;
+    }
+  })();
+  return supabaseAuthReady;
 }
 
 // HUM's UI is username/password, but Firebase Authentication is built
@@ -763,6 +862,427 @@ function handleComposerTypingInput(){
 }
 
 /* ===================================================================
+   SECTION: VOICE MESSAGES (recording + Supabase Storage)
+   Three parts:
+     - RECORDING: startVoiceRecording()/stopVoiceRecordingAndCollect()/
+       cancelVoiceRecording() — a real browser MediaRecorder capturing a
+       real microphone stream. The only timer involved
+       (voiceRecordTimerInterval) is purely cosmetic — it repaints an
+       elapsed-time label from Date.now(), it is never the thing that
+       decides what audio data exists; that's 100% MediaRecorder's own
+       'dataavailable'/'stop' events.
+     - UPLOAD: uploadVoiceBlob()/sendVoiceMessage() — pushes the
+       recorded Blob to Supabase Storage (see the SUPABASE VOICE
+       STORAGE section above for `supabase`/ensureSupabaseAuth), then
+       creates a normal Firestore message via the existing addMessage()
+       with `extra` metadata pointing at the uploaded file. If the
+       upload fails, no Firestore message is ever created; if the
+       Firestore write fails AFTER a successful upload, the now-orphaned
+       Supabase file is best-effort deleted (deleteVoiceBlobSafely).
+     - PLAYBACK: one shared <audio> element for the whole app (not one
+       per message bubble, which would fight with renderChatMessages()
+       rebuilding the message list's innerHTML on every update) — see
+       toggleVoicePlayback/syncVoicePlayersUI. Because there's only ever
+       one <audio> element, only one voice message can ever be playing
+       at a time by construction.
+=================================================================== */
+
+// In rough preference order — MediaRecorder.isTypeSupported varies a
+// lot across browsers, so this is checked at record time rather than
+// ever assumed. audio/webm;codecs=opus is what Chrome/Firefox/Edge all
+// support; Safari (desktop 14.1+/iOS 14.3+) supports MediaRecorder but
+// not webm at all, hence the mp4/ogg fallbacks.
+const VOICE_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+  'audio/ogg',
+];
+function pickVoiceMimeType(){
+  if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+  return VOICE_MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) || '';
+}
+
+function isVoiceRecordingSupported(){
+  return typeof MediaRecorder !== 'undefined'
+    && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+// --- Recording state (module-level, mirroring the typing section's
+// pattern above rather than living on the shared `state` object — this
+// is transient device/tab-local recording state, not app data). ---
+let voiceRecorder = null;              // active MediaRecorder, or null when not recording
+let voiceRecorderStream = null;        // the getUserMedia MediaStream backing it, so its tracks can be released
+let voiceChunks = [];                  // Blob chunks collected via 'dataavailable' for the CURRENT recording
+let voiceRecordStartedAt = 0;          // Date.now() when recording began — elapsed-time display only
+let voiceRecordTimerInterval = null;   // repaints the elapsed-time label; see the section comment above re: this NOT being the recording itself
+
+function isRecordingVoice(){
+  return !!(voiceRecorder && voiceRecorder.state === 'recording');
+}
+
+function formatVoiceDuration(totalSeconds){
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function updateVoiceRecordElapsedUI(){
+  if(!els.chatVoiceRecordTime) return;
+  els.chatVoiceRecordTime.textContent = formatVoiceDuration((Date.now() - voiceRecordStartedAt) / 1000);
+}
+
+// Swaps the composer between its normal (text input + mic + send) and
+// recording (elapsed time + cancel + stop) layouts. Every element here
+// already exists in index.html; this only ever toggles the `hidden`
+// attribute HUM's global [hidden]{display:none!important;} rule (see
+// style.css) already relies on everywhere else — no new CSS mechanism.
+function setComposerRecordingMode(isRecording){
+  if(els.chatInput) els.chatInput.hidden = isRecording;
+  if(els.chatMicBtn) els.chatMicBtn.hidden = isRecording;
+  if(els.chatSendBtn) els.chatSendBtn.hidden = isRecording;
+  if(els.chatVoiceRecordingBar) els.chatVoiceRecordingBar.hidden = !isRecording;
+  if(!isRecording && els.chatVoiceRecordTime) els.chatVoiceRecordTime.textContent = '0:00';
+}
+
+// Stops the elapsed-time repaint timer and releases the microphone
+// (stops every track on the active getUserMedia stream) — called on
+// stop, cancel, chat switch, block, and logout, so HUM never holds the
+// microphone open longer than an actual in-progress recording needs.
+function releaseVoiceMic(){
+  if(voiceRecordTimerInterval){
+    clearInterval(voiceRecordTimerInterval);
+    voiceRecordTimerInterval = null;
+  }
+  if(voiceRecorderStream){
+    voiceRecorderStream.getTracks().forEach((tr) => tr.stop());
+    voiceRecorderStream = null;
+  }
+  voiceRecorder = null;
+  voiceChunks = [];
+}
+
+// Requests the microphone and starts recording into the currently open
+// chat. Bound to the mic button (see the event wiring near
+// els.chatMicBtn further down).
+async function startVoiceRecording(){
+  const me = currentUser();
+  if(!me || !state.activeChatUser) return;
+  if(state.myBlockedUids.has(state.activeChatUser.uid)) return; // composer/mic are already disabled in this case; this is just a second guard
+  if(isRecordingVoice()) return; // already recording — a second press of the mic button is a no-op, not a second recording
+
+  if(!isVoiceRecordingSupported()){
+    showToast(t('chat.voice.unsupported'), 'error');
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e){
+    console.error('HUM: microphone access failed', e);
+    showToast(t('chat.voice.micDenied'), 'error');
+    return;
+  }
+
+  // Typing and recording are mutually exclusive in the composer — clear
+  // any in-progress typing flag the moment recording actually starts,
+  // so it can never get stuck "true" while the text input sits empty
+  // and hidden underneath the recording bar (see setComposerRecordingMode).
+  stopMyTyping();
+
+  const mimeType = pickVoiceMimeType();
+  voiceRecorderStream = stream;
+  voiceChunks = [];
+  try {
+    voiceRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch(e){
+    console.error('HUM: MediaRecorder could not start', e);
+    showToast(t('chat.voice.unsupported'), 'error');
+    releaseVoiceMic();
+    return;
+  }
+
+  voiceRecorder.addEventListener('dataavailable', (e) => {
+    if(e.data && e.data.size > 0) voiceChunks.push(e.data);
+  });
+  voiceRecorder.addEventListener('error', (e) => {
+    console.error('HUM: recording error', (e && e.error) || e);
+    showToast(t('chat.voice.recordFailed'), 'error');
+    cancelVoiceRecording();
+  });
+
+  voiceRecorder.start();
+  voiceRecordStartedAt = Date.now();
+  setComposerRecordingMode(true);
+  updateVoiceRecordElapsedUI();
+  voiceRecordTimerInterval = setInterval(updateVoiceRecordElapsedUI, 250);
+}
+
+// Stops the active recording and resolves with { blob, mimeType,
+// durationSeconds }, or null if there's nothing usable (never actually
+// recording, or an empty clip — e.g. stop pressed within a few
+// milliseconds of start, before any 'dataavailable' event fired).
+// Always releases the microphone and resets the composer UI before
+// resolving, success or not.
+function stopVoiceRecordingAndCollect(){
+  return new Promise((resolve) => {
+    if(!voiceRecorder || voiceRecorder.state !== 'recording'){
+      resolve(null);
+      return;
+    }
+    const mimeType = voiceRecorder.mimeType || 'audio/webm';
+    const startedAt = voiceRecordStartedAt;
+    voiceRecorder.addEventListener('stop', () => {
+      const chunks = voiceChunks;
+      releaseVoiceMic();
+      setComposerRecordingMode(false);
+      if(!chunks.length){
+        resolve(null);
+        return;
+      }
+      const blob = new Blob(chunks, { type: mimeType });
+      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      resolve({ blob, mimeType, durationSeconds });
+    }, { once: true });
+    voiceRecorder.stop();
+  });
+}
+
+// Discards whatever's been recorded so far without uploading anything —
+// bound to the composer's Cancel button, and used by every place a
+// recording needs to be silently abandoned instead of sent: switching
+// chats, the chat becoming blocked, and logging out.
+function cancelVoiceRecording(){
+  if(voiceRecorder && voiceRecorder.state === 'recording'){
+    // No 'stop' listener attached here on purpose — releaseVoiceMic()
+    // below discards voiceChunks unconditionally, so nothing depends on
+    // 'stop' actually firing; MediaRecorder.stop() is safe to call
+    // without one.
+    try { voiceRecorder.stop(); } catch(e){ /* already inactive/stopped */ }
+  }
+  releaseVoiceMic();
+  setComposerRecordingMode(false);
+}
+
+// voice-messages/{conversationId}/{uid}/{uniqueFileName} — matches the
+// bucket layout already set up in Supabase. The extension is inferred
+// from the actual recorded MIME type (see pickVoiceMimeType) rather
+// than hardcoded, since which one MediaRecorder actually used varies
+// by browser.
+function uniqueVoiceFileName(mimeType){
+  const ext = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+  const rand = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${rand}.${ext}`;
+}
+
+// Uploads `blob` to Supabase Storage and returns the storage path on
+// success, or throws on failure — sendVoiceMessage() below decides what
+// "failure" means for the rest of the send flow. `upsert: false` is
+// deliberate and matches "do not overwrite an existing voice message":
+// every recording already gets a fresh random filename, so a collision
+// should never legitimately happen, and if it somehow did, failing
+// loudly is safer than silently overwriting someone's audio.
+async function uploadVoiceBlob(convId, uid, blob, mimeType){
+  if(!supabase) throw new Error('Supabase is not configured');
+  const ok = await ensureSupabaseAuth();
+  if(!ok) throw new Error('Supabase authentication failed');
+  const path = `${convId}/${uid}/${uniqueVoiceFileName(mimeType)}`;
+  const { error } = await supabase.storage.from(VOICE_BUCKET).upload(path, blob, {
+    contentType: mimeType,
+    upsert: false,
+  });
+  if(error) throw error;
+  return path;
+}
+
+// Best-effort cleanup for an orphaned upload — used only when the
+// Supabase upload already succeeded but the follow-up Firestore write
+// then failed. Never allowed to throw: this already runs inside a
+// catch block for a worse problem (see sendVoiceMessage), and a
+// cleanup failure here must never mask or replace that original error.
+async function deleteVoiceBlobSafely(path){
+  if(!supabase || !path) return;
+  try {
+    await supabase.storage.from(VOICE_BUCKET).remove([path]);
+  } catch(e){
+    console.error('HUM: failed to clean up orphaned voice file', path, e);
+  }
+}
+
+// Full voice-message send flow — record → blob → upload → Firestore
+// message — mirroring sendChatMessage()'s error-toast posture but for
+// audio instead of text. Bound to the composer's Stop button (stopping
+// the recording IS "send" here, matching the recording-bar UI: Cancel
+// discards, Stop sends).
+async function sendVoiceMessage(){
+  const me = currentUser();
+  if(!me || !state.activeChatUser) return;
+  const other = state.activeChatUser;
+
+  if(state.myBlockedUids.has(other.uid)){
+    // The composer/mic are already disabled while blocked, but this
+    // covers the small window between pressing Stop and this function
+    // actually running if a block landed in that instant — "do not
+    // upload the voice message; do not create a Firestore message."
+    cancelVoiceRecording();
+    return;
+  }
+
+  const recording = await stopVoiceRecordingAndCollect();
+  if(!recording){
+    showToast(t('chat.voice.emptyRecording'), 'error');
+    return;
+  }
+
+  const convId = conversationId(me.uid, other.uid);
+  showToast(t('chat.voice.uploading'));
+
+  let path;
+  try {
+    path = await uploadVoiceBlob(convId, me.uid, recording.blob, recording.mimeType);
+  } catch(e){
+    console.error('HUM: voice upload failed', e);
+    showToast(t('chat.voice.uploadFailed'), 'error');
+    return; // nothing uploaded successfully → no Firestore message, per spec
+  }
+
+  try {
+    await addMessage(me, other, '', {
+      type: 'voice',
+      voicePath: path,
+      voiceMimeType: recording.mimeType,
+      voiceDuration: recording.durationSeconds,
+    });
+    showToast(t('chat.voice.sent'), 'success');
+  } catch(e){
+    console.error('HUM: failed to create voice message after upload', e);
+    showToast(t('errors.sendFailed'), 'error');
+    // Upload succeeded but the message never got created — clean up the
+    // now-orphaned file rather than leaving it in Storage forever.
+    await deleteVoiceBlobSafely(path);
+  }
+}
+
+// --- Playback: one shared <audio> element for the whole app. ---
+const sharedVoiceAudio = new Audio();
+let activeVoiceMessageId = null; // Firestore message id currently loaded in sharedVoiceAudio, or null
+
+// Reflects sharedVoiceAudio's current state onto every voice-message
+// bubble currently in the DOM (there's normally at most one that's
+// "active", but this is written to just re-derive the whole visible
+// set from scratch every time rather than track per-bubble diffs — the
+// message list is short enough per conversation that this is cheap,
+// and it's the same "re-render is the source of truth" posture
+// renderChatMessages() itself already uses). Called on every
+// play/pause/timeupdate/ended from the audio element, AND once at the
+// end of renderChatMessages() so a list re-render (e.g. a read receipt
+// ticking in) can't visually reset a bubble that's actually mid-playback.
+function syncVoicePlayersUI(){
+  if(!els.chatMessages) return;
+  els.chatMessages.querySelectorAll('.chat-msg__bubble--voice').forEach((bubble) => {
+    const msgId = bubble.getAttribute('data-voice-id');
+    const isActive = !!msgId && msgId === activeVoiceMessageId;
+    const isPlaying = isActive && !sharedVoiceAudio.paused;
+    const playBtn = bubble.querySelector('[data-voice-play]');
+    const fill = bubble.querySelector('.chat-voice-progress__fill');
+    const timeEl = bubble.querySelector('.chat-voice-time');
+    const baseDuration = Number(bubble.getAttribute('data-voice-duration')) || 0;
+
+    if(playBtn){
+      playBtn.classList.toggle('is-playing', isPlaying);
+      playBtn.setAttribute('aria-label', t(isPlaying ? 'chat.voice.pause' : 'chat.voice.play'));
+    }
+
+    let pct = 0;
+    let displaySeconds = baseDuration;
+    if(isActive && sharedVoiceAudio.duration && isFinite(sharedVoiceAudio.duration)){
+      pct = Math.min(100, (sharedVoiceAudio.currentTime / sharedVoiceAudio.duration) * 100);
+      displaySeconds = sharedVoiceAudio.currentTime > 0 || isPlaying ? sharedVoiceAudio.currentTime : sharedVoiceAudio.duration;
+    }
+    if(fill) fill.style.width = pct + '%';
+    if(timeEl) timeEl.textContent = formatVoiceDuration(displaySeconds);
+  });
+}
+sharedVoiceAudio.addEventListener('play', syncVoicePlayersUI);
+sharedVoiceAudio.addEventListener('pause', syncVoicePlayersUI);
+sharedVoiceAudio.addEventListener('timeupdate', syncVoicePlayersUI);
+sharedVoiceAudio.addEventListener('ended', () => {
+  activeVoiceMessageId = null;
+  syncVoicePlayersUI();
+});
+sharedVoiceAudio.addEventListener('error', () => {
+  if(activeVoiceMessageId){
+    console.error('HUM: voice audio element error', sharedVoiceAudio.error);
+    showToast(t('chat.voice.playbackError'), 'error');
+    activeVoiceMessageId = null;
+    syncVoicePlayersUI();
+  }
+});
+
+// Immediately silences and detaches the shared player — used when
+// leaving/switching chats (see openChat/leaveActiveChat) and on
+// logout, so audio from a conversation that's no longer open never
+// keeps playing in the background.
+function stopVoicePlayback(){
+  if(activeVoiceMessageId !== null || !sharedVoiceAudio.paused){
+    sharedVoiceAudio.pause();
+    sharedVoiceAudio.removeAttribute('src');
+    try { sharedVoiceAudio.load(); } catch(e){ /* no-op */ }
+  }
+  activeVoiceMessageId = null;
+}
+
+// Play/pause for one voice message bubble — bound via delegation on
+// els.chatMessages (see the event wiring near renderChatMessages
+// further down), since bubbles are recreated on every render and can't
+// hold their own listeners. Because there's only ever ONE <audio>
+// element for the whole app, starting a different message's playback
+// here always pauses whatever was playing before it — "only one voice
+// message should normally play at a time" holds by construction, not
+// by extra bookkeeping.
+async function toggleVoicePlayback(messageId, voicePath){
+  if(!supabase){
+    showToast(t('chat.voice.playbackError'), 'error');
+    return;
+  }
+  if(activeVoiceMessageId === messageId && !sharedVoiceAudio.paused){
+    sharedVoiceAudio.pause();
+    return;
+  }
+  if(activeVoiceMessageId === messageId && sharedVoiceAudio.src){
+    sharedVoiceAudio.play().catch((e) => {
+      console.error('HUM: voice playback failed', e);
+      showToast(t('chat.voice.playbackError'), 'error');
+    });
+    return;
+  }
+
+  sharedVoiceAudio.pause();
+  activeVoiceMessageId = messageId;
+  syncVoicePlayersUI(); // clears the previous bubble, and gives immediate feedback on the one just tapped
+
+  try {
+    const ok = await ensureSupabaseAuth();
+    if(!ok) throw new Error('Supabase authentication failed');
+    const { data, error } = await supabase.storage.from(VOICE_BUCKET).createSignedUrl(voicePath, 3600);
+    if(error || !data || !data.signedUrl) throw error || new Error('Supabase did not return a signed URL');
+    if(activeVoiceMessageId !== messageId) return; // the person tapped a different message while this was loading
+    sharedVoiceAudio.src = data.signedUrl;
+    await sharedVoiceAudio.play();
+  } catch(e){
+    console.error('HUM: voice playback failed', e);
+    showToast(t('chat.voice.playbackError'), 'error');
+    if(activeVoiceMessageId === messageId) activeVoiceMessageId = null;
+    syncVoicePlayersUI();
+  }
+}
+
+/* ===================================================================
    SECTION: LOCAL (DEVICE-ONLY) STORAGE LAYER
    Only things that are genuinely per-device — language and theme
    preference — still live in localStorage. Accounts and messages are
@@ -802,12 +1322,9 @@ function hasStoredLang(){
    SECTION: USERS (Firestore)
    Each user's document lives at users/{uid} — the Firebase Auth UID
    is the permanent account identity, since (unlike username) it never
-   changes and is never reused. Username is still unique — enforced via
-   Firebase Auth's synthetic per-username email at registration (see
-   emailForUsername) and via a direct Firestore lookup on username
-   *changes* (see updateProfile below; changing username never touches
-   Auth or its email) — and still how people search for and look up
-   other users, but it's
+   changes and is never reused. Username is still unique (enforced via
+   Firebase Auth's synthetic per-username email — see emailForUsername)
+   and still how people search for and look up other users, but it's
    just a field on the document now, not the document's address. This
    is what makes a username change a plain field update instead of a
    delete-and-recreate of the whole document — and what makes "the Auth
@@ -956,9 +1473,20 @@ async function ensureConversation(meUser, otherUser){
 // list — that copy refreshes on every message either of them sends, so
 // it can go a little stale between messages (e.g. right after someone
 // changes their display name) but never for long.
-async function addMessage(meUser, otherUser, text){
+// Sends a message and returns it. meUser/otherUser are full user
+// objects (not just usernames) because the conversation doc keeps a
+// denormalized copy of each participant's display info for the Chats
+// list — that copy refreshes on every message either of them sends, so
+// it can go a little stale between messages (e.g. right after someone
+// changes their display name) but never for long. `extra` is an
+// optional plain object merged onto the message doc after the base
+// fields — used by sendVoiceMessage() to add { type:'voice', voicePath,
+// voiceMimeType, voiceDuration } without this function needing to know
+// anything about voice messages specifically; an ordinary text message
+// (the vast majority of calls) just omits it.
+async function addMessage(meUser, otherUser, text, extra){
   const convId = await ensureConversation(meUser, otherUser);
-  const message = { from: meUser.uid, text, ts: new Date().toISOString() };
+  const message = { from: meUser.uid, text, ts: new Date().toISOString(), ...(extra || {}) };
   await addDoc(collection(db, 'conversations', convId, 'messages'), message);
   await setDoc(doc(db, 'conversations', convId), {
     participantsInfo: {
@@ -1230,7 +1758,15 @@ const translations = {
       emptyTitle:'Start the conversation', inputPlaceholder:'Message', send:'Send',
       youPrefix:'You: ', blockedNotice:"You've blocked this person.",
       typingIndicator:'Typing...',
-      receiptSent:'Sent', receiptRead:'Read'
+      receiptSent:'Sent', receiptRead:'Read',
+      voice:{
+        record:'Record voice message', stop:'Stop', cancel:'Cancel', recording:'Recording',
+        uploading:'Uploading voice message…', sent:'Voice message sent',
+        micDenied:'Failed to access microphone', unsupported:'Voice messages are not supported in this browser',
+        recordFailed:'Recording failed', emptyRecording:'Recording was too short',
+        uploadFailed:'Upload failed', playbackError:'Playback error',
+        play:'Play voice message', pause:'Pause voice message', listPreview:'🎤 Voice message'
+      }
     },
     menu:{
       remove:'Remove', block:'Block', unblock:'Unblock'
@@ -1331,7 +1867,15 @@ const translations = {
       emptyTitle:'Начните разговор', inputPlaceholder:'Сообщение', send:'Отправить',
       youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.',
       typingIndicator:'Печатает...',
-      receiptSent:'Отправлено', receiptRead:'Прочитано'
+      receiptSent:'Отправлено', receiptRead:'Прочитано',
+      voice:{
+        record:'Записать голосовое сообщение', stop:'Стоп', cancel:'Отмена', recording:'Запись',
+        uploading:'Загрузка голосового сообщения…', sent:'Голосовое сообщение отправлено',
+        micDenied:'Не удалось получить доступ к микрофону', unsupported:'Голосовые сообщения не поддерживаются в этом браузере',
+        recordFailed:'Ошибка записи', emptyRecording:'Запись слишком короткая',
+        uploadFailed:'Ошибка загрузки', playbackError:'Ошибка воспроизведения',
+        play:'Воспроизвести голосовое сообщение', pause:'Приостановить голосовое сообщение', listPreview:'🎤 Голосовое сообщение'
+      }
     },
     menu:{
       remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать'
@@ -1432,7 +1976,15 @@ const translations = {
       emptyTitle:'Suhbatni boshlang', inputPlaceholder:'Xabar', send:'Yuborish',
       youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.',
       typingIndicator:'Yozmoqda...',
-      receiptSent:'Yuborildi', receiptRead:'Oʻqildi'
+      receiptSent:'Yuborildi', receiptRead:'Oʻqildi',
+      voice:{
+        record:'Ovozli xabar yozish', stop:'Toʻxtatish', cancel:'Bekor qilish', recording:'Yozib olinmoqda',
+        uploading:'Ovozli xabar yuklanmoqda…', sent:'Ovozli xabar yuborildi',
+        micDenied:'Mikrofonga ruxsat berilmadi', unsupported:'Bu brauzerda ovozli xabarlar qoʻllab-quvvatlanmaydi',
+        recordFailed:'Yozib olishda xatolik', emptyRecording:'Yozuv juda qisqa',
+        uploadFailed:'Yuklashda xatolik', playbackError:'Ijro etishda xatolik',
+        play:'Ovozli xabarni ijro etish', pause:'Ovozli xabarni pauza qilish', listPreview:'🎤 Ovozli xabar'
+      }
     },
     menu:{
       remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish'
@@ -1752,6 +2304,16 @@ async function logoutUser(){
     await goOfflineNow(state.me.uid);
     await stopMyTyping();
   }
+  // Voice messages: "if the user logs out while recording, stop the
+  // MediaRecorder, release microphone tracks, cancel the recording, do
+  // not send/upload the audio" — cancelVoiceRecording() does all of
+  // that locally (no network write involved, so ordering relative to
+  // signOut() doesn't matter the way presence/typing's does above; this
+  // just needs to run before the mic is left with no owner). Also stop
+  // any active playback so audio from the just-ended session doesn't
+  // keep playing after logout.
+  cancelVoiceRecording();
+  stopVoicePlayback();
   stopAllConversationWatchers();
   await signOut(auth).catch(() => {});
   state.me = null;
@@ -1783,34 +2345,23 @@ async function updateProfile(updates){
   const usernameChanged = usernameDocId(nextUsername) !== usernameDocId(user.username);
   const nextLower = usernameDocId(nextUsername);
 
-  // Username uniqueness used to be enforced for free by Firebase Auth's
-  // email-already-in-use check, back when a username change also
-  // changed the synthetic Auth email it maps to. It no longer touches
-  // Auth at all (see below), so uniqueness is now checked directly
-  // against Firestore instead — the same lookup People Search uses.
+  // Changing the username means changing the Firebase Auth email it
+  // maps to, which Firebase itself rejects with auth/email-already-in-use
+  // if another account already has it — the same uniqueness check the
+  // rest of the app relies on, so there's nothing extra to pre-check
+  // here. It can also ask for a fresh login (auth/requires-recent-login)
+  // if the session is old, which is surfaced as a plain form error
+  // rather than a crash.
   if(usernameChanged){
     try{
-      const existing = await findUserByUsername(nextLower);
-      if(existing && existing.uid !== user.uid){
+      await updateEmail(auth.currentUser, emailForUsername(nextLower));
+    }catch(e){
+      if(e.code === 'auth/email-already-in-use'){
         return { ok:false, errors:{ username: t('auth.validation.usernameTaken') } };
       }
-    }catch(e){
-      return { ok:false, errors:{ form: t('errors.network') } };
-    }
-  }
-
-  // Display name is the one piece of this form Firebase Auth itself
-  // tracks (auth.currentUser.displayName), so it's kept in sync via
-  // Auth's own updateProfile() — never updateEmail(). Username/
-  // usernameLower are a Firestore-only concept (see usernameDocId /
-  // emailForUsername above) and must NEVER be sent to Firebase Auth as
-  // an email change: that's the bug this replaces. The user's Auth
-  // email is not read, referenced, or written anywhere in this
-  // function, on purpose.
-  if(nextDisplayName !== user.displayName){
-    try{
-      await fbUpdateAuthProfile(auth.currentUser, { displayName: nextDisplayName });
-    }catch(e){
+      if(e.code === 'auth/requires-recent-login'){
+        return { ok:false, errors:{ form: t('errors.requiresRecentLogin') } };
+      }
       return { ok:false, errors:{ form: t('errors.network') } };
     }
   }
@@ -1967,7 +2518,11 @@ function renderProfileSummary(container, user){
 function renderChatsListRow(user, otherUid, lastMessage, meUid){
   const isOwn = lastMessage.from === meUid;
   const prefix = isOwn ? t('chat.youPrefix') : '';
-  const previewText = (prefix + lastMessage.text).replace(/\s+/g, ' ').trim();
+  // A voice message's `text` is always '' (see addMessage/
+  // sendVoiceMessage) — show a translated label instead of a blank
+  // preview rather than teaching this row about every message type.
+  const bodyText = lastMessage.type === 'voice' ? t('chat.voice.listPreview') : lastMessage.text;
+  const previewText = (prefix + bodyText).replace(/\s+/g, ' ').trim();
   return `
     <div class="result-row" data-username="${escapeHtml(user.username)}" role="button" tabindex="0">
       <div class="avatar" data-presence-uid="${escapeHtml(otherUid)}" style="background:${avatarBg(user)}">${avatarMarkup(user)}</div>
@@ -2089,16 +2644,53 @@ function renderChatMessages(){
       const receiptMarkup = isOwn
         ? `<span class="chat-msg__receipt${m.readAt ? ' chat-msg__receipt--read' : ''}" title="${escapeHtml(t(m.readAt ? 'chat.receiptRead' : 'chat.receiptSent'))}">${m.readAt ? '✓✓' : '✓'}</span>`
         : '';
+      const bubbleMarkup = (m.type === 'voice' && m.voicePath)
+        ? voiceMessageBubbleMarkup(m)
+        : `<div class="chat-msg__bubble">${escapeHtml(m.text)}</div>`;
       return `
         <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}">
-          <div class="chat-msg__bubble">${escapeHtml(m.text)}</div>
+          ${bubbleMarkup}
           <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}</div>
         </div>
       `;
     })
     .join('');
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  // Re-derive playback UI for whatever's now in the DOM — if a voice
+  // message was mid-playback when this render fired (e.g. triggered by
+  // an unrelated read-receipt update), this restores its progress
+  // instead of it flashing back to "not playing" until the next
+  // 'timeupdate' tick.
+  syncVoicePlayersUI();
 }
+
+// Compact HUM-style voice-message player, used in place of the normal
+// text bubble for `type === 'voice'` messages (see renderChatMessages
+// above). data-voice-id is the Firestore message id (see
+// toggleVoicePlayback/syncVoicePlayersUI); playback itself is wired via
+// delegation, not per-node listeners, since this markup is torn down
+// and rebuilt on every renderChatMessages() call.
+function voiceMessageBubbleMarkup(m){
+  const duration = Number(m.voiceDuration) || 0;
+  const isActivePlaying = m.id && m.id === activeVoiceMessageId && !sharedVoiceAudio.paused;
+  return `
+    <div class="chat-msg__bubble chat-msg__bubble--voice" data-voice-id="${escapeHtml(m.id || '')}" data-voice-path="${escapeHtml(m.voicePath)}" data-voice-duration="${duration}">
+      <button type="button" class="chat-voice-play${isActivePlaying ? ' is-playing' : ''}" data-voice-play aria-label="${escapeHtml(t(isActivePlaying ? 'chat.voice.pause' : 'chat.voice.play'))}">
+        <svg class="chat-voice-play__icon-play" viewBox="0 0 24 24" width="14" height="14"><path d="M6 4l14 8-14 8V4Z"/></svg>
+        <svg class="chat-voice-play__icon-pause" viewBox="0 0 24 24" width="14" height="14"><path d="M6 4h4v16H6V4Zm8 0h4v16h-4V4Z"/></svg>
+      </button>
+      <div class="chat-voice-track">
+        <div class="chat-voice-progress"><div class="chat-voice-progress__fill"></div></div>
+        <div class="chat-voice-time">${escapeHtml(formatVoiceDuration(duration))}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Delegated click handling for voice-message play/pause buttons is
+// wired near the rest of the composer/chat event listeners further
+// down (after `els` is defined) — see the els.chatMessages listener
+// alongside els.chatComposerForm/els.chatInput below.
 
 /* ===================================================================
    SECTION: APPLICATION UI — state, elements, event wiring, init
@@ -2145,6 +2737,11 @@ const els = {
   chatComposerForm: document.getElementById("chatComposerForm"),
   chatInput: document.getElementById("chatInput"),
   chatSendBtn: document.getElementById("chatSendBtn"),
+  chatMicBtn: document.getElementById("chatMicBtn"),
+  chatVoiceRecordingBar: document.getElementById("chatVoiceRecordingBar"),
+  chatVoiceRecordTime: document.getElementById("chatVoiceRecordTime"),
+  chatVoiceCancelBtn: document.getElementById("chatVoiceCancelBtn"),
+  chatVoiceStopBtn: document.getElementById("chatVoiceStopBtn"),
 
   profileEditToggle: document.getElementById("profileEditToggle"),
   profileSummary: document.getElementById("profileSummary"),
@@ -2250,6 +2847,16 @@ function stopAllConversationWatchers(){
   // the signed-in user's OWN typing flag is handled separately by
   // logoutUser() (it needs to be awaited before signOut()), not here.
   stopTypingWatcher();
+  // And again for voice messages: this is the same central "tear
+  // everything down" chokepoint presence/typing already use, so a
+  // stray in-progress recording or active playback gets cleaned up here
+  // too regardless of which caller reached this point (logoutUser
+  // already calls cancelVoiceRecording()/stopVoicePlayback() directly
+  // for the ordering reasons noted there; these are harmless no-ops in
+  // that case, and the real safety net for any OTHER path that ends up
+  // calling this function).
+  cancelVoiceRecording();
+  stopVoicePlayback();
 }
 
 // Starts (or restarts) the live "who am I talking to, and what did
@@ -2552,6 +3159,11 @@ function leaveActiveChat() {
   // afterwards.
   stopMyTyping();
   stopTypingWatcher();
+  // Voice messages: same idea — abandon any in-progress recording and
+  // stop any active playback, there's no chat left for either to
+  // belong to once this returns.
+  cancelVoiceRecording();
+  stopVoicePlayback();
   state.activeChatUsername = null;
   state.activeChatUser = null;
   state.chatMessagesData = [];
@@ -2571,11 +3183,18 @@ function applyChatBlockState() {
   if (els.chatBlockedNotice) els.chatBlockedNotice.hidden = !blocked;
   if (els.chatInput) els.chatInput.disabled = blocked;
   if (els.chatSendBtn) els.chatSendBtn.disabled = blocked;
+  if (els.chatMicBtn) els.chatMicBtn.disabled = blocked;
   if (blocked && els.chatInput) els.chatInput.value = "";
   // A disabled composer can no longer fire "input" events, so nothing
   // would otherwise clear a typing flag left over from just before the
   // block took effect — clear it explicitly here too.
   if (blocked) stopMyTyping();
+  // Voice messages: "if the chat becomes blocked while recording, stop/
+  // cancel the recording; do not upload; do not create a Firestore
+  // message" — cancelVoiceRecording() does exactly that (discards
+  // without ever calling uploadVoiceBlob/addMessage). Safe to call even
+  // when nothing is actually recording.
+  if (blocked) cancelVoiceRecording();
 }
 
 els.chatBlockedUnblockBtn &&
@@ -3050,6 +3669,13 @@ els.mainProfileView.addEventListener("click", (e) => {
 async function openChat(username, navigate) {
   const me = currentUser();
   if (!me) return;
+  // Voice messages: abandon any in-progress recording from whatever
+  // chat was open before this one, and stop any active playback — both
+  // are tied to "the currently open chat" and neither should survive a
+  // switch (see cancelVoiceRecording/stopVoicePlayback in the VOICE
+  // MESSAGES section). Safe to call even if neither is actually active.
+  cancelVoiceRecording();
+  stopVoicePlayback();
   let other;
   try {
     other = await findUserByUsername(username);
@@ -3232,6 +3858,38 @@ els.chatInput.addEventListener("keydown", (e) => {
     e.preventDefault();
     sendChatMessage();
   }
+});
+
+// Voice messages: mic button starts recording; Stop/Cancel in the
+// recording bar either send or discard it (see the VOICE MESSAGES
+// section above for startVoiceRecording/sendVoiceMessage/
+// cancelVoiceRecording).
+els.chatMicBtn &&
+  els.chatMicBtn.addEventListener("click", () => {
+    startVoiceRecording();
+  });
+els.chatVoiceStopBtn &&
+  els.chatVoiceStopBtn.addEventListener("click", () => {
+    sendVoiceMessage();
+  });
+els.chatVoiceCancelBtn &&
+  els.chatVoiceCancelBtn.addEventListener("click", () => {
+    cancelVoiceRecording();
+  });
+
+// Delegated click handling for voice-message play/pause buttons — has
+// to be delegation, not a per-button listener, since bubbles are torn
+// down and rebuilt on every renderChatMessages() call (see
+// voiceMessageBubbleMarkup above).
+els.chatMessages.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-voice-play]");
+  if (!btn) return;
+  const bubble = btn.closest(".chat-msg__bubble--voice");
+  if (!bubble) return;
+  const messageId = bubble.getAttribute("data-voice-id");
+  const voicePath = bubble.getAttribute("data-voice-path");
+  if (!messageId || !voicePath) return;
+  toggleVoicePlayback(messageId, voicePath);
 });
 
 /* ================= OWN PROFILE ================= */

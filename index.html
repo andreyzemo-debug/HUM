@@ -809,6 +809,25 @@
               placeholder="Message"
             ></textarea>
             <button
+              type="button"
+              class="chat-composer__mic"
+              id="chatMicBtn"
+              data-i18n-title="chat.voice.record"
+              title="Record voice message"
+              aria-label="Record voice message"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <rect x="9" y="2" width="6" height="12" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+            <div class="chat-composer__voice-bar" id="chatVoiceRecordingBar" hidden>
+              <span class="chat-composer__voice-dot" aria-hidden="true"></span>
+              <span class="chat-composer__voice-time" id="chatVoiceRecordTime">0:00</span>
+              <button type="button" class="link-btn" id="chatVoiceCancelBtn" data-i18n="chat.voice.cancel">Cancel</button>
+              <button type="button" class="btn btn--primary btn--small" id="chatVoiceStopBtn" data-i18n="chat.voice.stop">Stop</button>
+            </div>
+            <button
               type="submit"
               class="btn btn--primary chat-composer__send"
               id="chatSendBtn"

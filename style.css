@@ -502,6 +502,63 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 }
 .chat-composer__send svg{width:18px;height:18px;}
 
+/* Mic button: sized/shaped like the send button so it sits naturally in
+   the same row (see --composer-h in the composer comment above). Its
+   `hidden` state while recording (and the recording bar's `hidden`
+   state otherwise) are driven by setComposerRecordingMode() in app.js,
+   using HUM's existing global [hidden]{display:none!important;} rule —
+   no separate show/hide mechanism introduced here. */
+.chat-composer__mic{
+  flex:none;width:var(--composer-h);height:var(--composer-h);padding:0;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  background:transparent;border:1.5px solid var(--border);color:var(--text-muted);
+  transition:border-color .15s ease,color .15s ease;
+}
+.chat-composer__mic:hover{border-color:var(--accent);color:var(--accent);}
+.chat-composer__mic:disabled{opacity:.5;cursor:not-allowed;border-color:var(--border);color:var(--text-muted);}
+
+/* Recording bar takes the input's place (flex:1) while recording — see
+   setComposerRecordingMode(true) hiding chatInput/chatMicBtn/chatSendBtn
+   and showing this instead, so the composer row's overall shape never
+   changes, only what's inside it. */
+.chat-composer__voice-bar{
+  flex:1;min-width:0;display:flex;align-items:center;gap:10px;
+  height:var(--composer-h);padding:0 4px;
+}
+.chat-composer__voice-dot{
+  flex:none;width:10px;height:10px;border-radius:50%;background:var(--danger);
+  animation:chat-voice-pulse 1.2s ease-in-out infinite;
+}
+@keyframes chat-voice-pulse{
+  0%,100%{opacity:1;} 50%{opacity:.35;}
+}
+.chat-composer__voice-time{
+  flex:none;font-family:var(--font-mono);font-size:13px;color:var(--text-muted);min-width:34px;
+}
+.chat-composer__voice-bar .link-btn{margin-left:auto;}
+
+/* ===================================================================
+   Voice message player (chat bubble) — replaces the plain text bubble
+   for type:'voice' messages (see voiceMessageBubbleMarkup in app.js).
+   Reuses .chat-msg__bubble's existing background/border/radius, just
+   with row layout instead of wrapped text.
+=================================================================== */
+.chat-msg__bubble--voice{display:flex;align-items:center;gap:10px;padding:8px 12px 8px 8px;min-width:200px;}
+.chat-voice-play{
+  flex:none;width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.16);color:inherit;
+}
+.chat-msg--theirs .chat-voice-play{background:var(--accent);color:#0d0f14;}
+.chat-voice-play__icon-pause{display:none;}
+.chat-voice-play.is-playing .chat-voice-play__icon-play{display:none;}
+.chat-voice-play.is-playing .chat-voice-play__icon-pause{display:block;}
+.chat-voice-track{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+.chat-voice-progress{height:3px;border-radius:2px;background:rgba(255,255,255,.25);overflow:hidden;}
+.chat-msg--theirs .chat-voice-progress{background:var(--border);}
+.chat-voice-progress__fill{height:100%;width:0;background:currentColor;border-radius:2px;transition:width .1s linear;}
+.chat-voice-time{font-family:var(--font-mono);font-size:11px;opacity:.85;}
+
 /* Keep the header/composer borders and background spanning the full
    width of the chat column (so they don't look like they're floating
    mid-row), but on wide desktop/monitor screens push their inner
