@@ -476,6 +476,31 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .chat-msg__receipt{font-size:11px;letter-spacing:-1px;color:var(--text-faint);}
 .chat-msg__receipt--read{color:var(--accent);letter-spacing:normal;}
 
+/* Tombstone bubble for a "delete for everyone" message (see
+   renderChatMessages/deleteMessageForEveryone in app.js) — reuses the
+   normal bubble shape, just muted/italic text instead of real content. */
+.chat-msg__bubble--deleted{
+  font-style:italic;color:var(--text-faint);background:var(--surface);border-color:var(--border);
+}
+.chat-msg--own .chat-msg__bubble--deleted{background:var(--surface);color:var(--text-faint);}
+
+/* Per-message "⋮" delete-menu trigger, in the same meta row as the
+   timestamp/receipt (see renderChatMessages) — hidden until hover on
+   pointer:fine (desktop) devices to stay out of the way, always visible
+   on touch (pointer:coarse) since there's no hover state to reveal it
+   there. Opens the shared #actionMenu popover (see buildMessageActions/
+   openActionMenu in app.js), same component Remove/Block already use. */
+.chat-msg__menu-btn{
+  flex:none;width:20px;height:20px;padding:0;border:none;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  background:transparent;color:inherit;opacity:0;transition:opacity .15s ease,background .15s ease;
+}
+.chat-msg:hover .chat-msg__menu-btn{opacity:.7;}
+.chat-msg__menu-btn:hover,.chat-msg__menu-btn:focus-visible{opacity:1;background:rgba(127,127,127,.18);}
+@media (hover:none){
+  .chat-msg__menu-btn{opacity:.55;}
+}
+
 /* Composer: input and send button share --composer-h so they always
    line up exactly, at every breakpoint (see the --composer-h override
    in the small-phone media query below instead of separately resizing

@@ -146,24 +146,53 @@
 //                  && request.auth.uid in conversationDoc(convId).data.participants
 //                  && request.resource.data.from == request.auth.uid
 //                  && !isBlockedPair(request.auth.uid, otherParticipant(convId, request.auth.uid));
-//                // Read receipts: the ONLY update any message doc can
-//                // ever receive, and only from the RECIPIENT (never
-//                // the sender — this is what stops a sender from
-//                // forging their own "read" state). `from`/`text`/`ts`
-//                // must come through byte-for-byte unchanged, and
-//                // .affectedKeys().hasOnly(['readAt']) means readAt is
-//                // structurally the only field this request is even
-//                // allowed to touch — there's no way to smuggle any
-//                // other change in alongside it.
+//                // Three, and ONLY three, shapes of update are ever
+//                // allowed on a message doc — every other field
+//                // (from/text/ts/type/voicePath/…) is permanently
+//                // immutable once created, in every one of them:
+//                //   (A) Read receipts — RECIPIENT only (never the
+//                //       sender, which is what stops a sender forging
+//                //       their own "read" state), touching readAt and
+//                //       nothing else. Unchanged from before.
+//                //   (B) "Delete for me" — EITHER participant, on ANY
+//                //       message in the conversation (their own sent
+//                //       messages included — it's a personal
+//                //       visibility flag, not a content change),
+//                //       touching ONLY deletedFor, and only ever
+//                //       adding their OWN uid to it (arrayUnion — see
+//                //       deleteMessageForMe in app.js — already
+//                //       guarantees the resulting array only differs
+//                //       by that one uid). This mirrors
+//                //       conversations.hiddenFor's existing "Remove"
+//                //       pattern above, just one level deeper.
+//                //   (C) "Delete for everyone" — the message's own
+//                //       SENDER only, touching ONLY deletedForEveryone,
+//                //       and only ever setting it to literal `true`
+//                //       (never back to false, never alongside any
+//                //       other change) — a one-way tombstone flag, not
+//                //       an actual content rewrite. Rendering (see
+//                //       renderChatMessages in app.js) is what actually
+//                //       hides the original text/voicePath/etc. once
+//                //       this is set; they still physically exist in
+//                //       the doc, exactly like readAt's approach.
 //                allow update: if isSignedIn()
 //                  && exists(/databases/$(database)/documents/conversations/$(convId))
 //                  && request.auth.uid in conversationDoc(convId).data.participants
-//                  && request.auth.uid != resource.data.from
-//                  && request.resource.data.from == resource.data.from
-//                  && request.resource.data.text == resource.data.text
-//                  && request.resource.data.ts == resource.data.ts
-//                  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
-//                  && request.resource.data.readAt is string;
+//                  && (
+//                    (request.auth.uid != resource.data.from
+//                      && request.resource.data.from == resource.data.from
+//                      && request.resource.data.text == resource.data.text
+//                      && request.resource.data.ts == resource.data.ts
+//                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
+//                      && request.resource.data.readAt is string)
+//                    ||
+//                    (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedFor'])
+//                      && request.auth.uid in request.resource.data.deletedFor)
+//                    ||
+//                    (request.auth.uid == resource.data.from
+//                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedForEveryone'])
+//                      && request.resource.data.deletedForEveryone == true)
+//                  );
 //                allow delete: if false;
 //              }
 //            }
@@ -217,7 +246,27 @@
 //          text on a voice message is '' both before and after a
 //          read-receipt update, so that already holds. The actual
 //          audio bytes never touch Firestore at all — they live in
-//          Supabase Storage; voicePath is only ever a pointer to them.)
+//          Supabase Storage; voicePath is only ever a pointer to them.
+//        - conversations/{convId}/messages/{msgId}.deletedFor: string[]
+//          — same per-viewer "hidden from just this account's own
+//          view" pattern as conversations.hiddenFor, just on a single
+//          message instead of a whole conversation (see
+//          deleteMessageForMe/renderChatMessages in app.js). Either
+//          participant can add their own uid, to ANY message
+//          (including one they sent themselves); nobody else's
+//          messages ever change, and the other participant's copy of
+//          this exact message is completely unaffected.
+//        - conversations/{convId}/messages/{msgId}.deletedForEveryone:
+//          true — a one-way tombstone flag the message's own SENDER
+//          (and only the sender) can set (see
+//          deleteMessageForEveryone in app.js). Once set,
+//          renderChatMessages() shows "This message was deleted" for
+//          BOTH participants instead of the original content — the
+//          original text/voicePath/etc. are left alone in Firestore,
+//          exactly like readAt's approach above, they're simply never
+//          displayed once tombstoned. (A tombstoned voice message's
+//          underlying Supabase audio file is intentionally left alone
+//          too — out of scope for this pass.))
 //
 //   6. Realtime Database → Rules, paste EXACTLY this (separate product
 //      from Firestore, separate console tab, separate rules language —
@@ -1558,6 +1607,56 @@ async function markMessagesRead(meUid, otherUid, convId, messages){
   }
 }
 
+/* ===================================================================
+   SECTION: DELETE MESSAGE ("delete for me" / "delete for everyone")
+   Mirrors the shape of the conversation-level Remove/Block section
+   further down: no message document is ever actually deleted from
+   Firestore (allow delete: if false — unchanged) — instead:
+     - "Delete for me" adds the caller's own uid to that message's
+       `deletedFor` array, the exact same per-viewer-visibility pattern
+       conversations.hiddenFor already uses for "Remove". Any
+       participant can do this to ANY message in the conversation,
+       including their own — it only ever affects their own view.
+     - "Delete for everyone" flips `deletedForEveryone: true` on the
+       message — a tombstone flag, never an actual content rewrite —
+       and ONLY the message's own sender may ever set it (see the
+       Firestore rules comment at the top of this file). Rendering (see
+       renderChatMessages) shows "This message was deleted" in place of
+       the original bubble content once this is set; the original
+       text/voicePath/etc. are left alone in Firestore, they're simply
+       never displayed once tombstoned. Note this does NOT delete the
+       underlying Supabase audio file for a tombstoned voice message —
+       out of scope for this pass, same "smallest safe change" posture
+       as everywhere else in this file.
+   Because both are plain field writes on the exact same message doc
+   the open chat's live listener (watchConversationMessages) is already
+   subscribed to, neither needs a new listener — the existing real-time
+   stream picks up the change and re-renders automatically.
+=================================================================== */
+
+// "Delete for me" — hides one message from just the caller's own view.
+// Uses setDoc+merge (not a fresh `updateDoc` import) to match every
+// other single-field message/conversation write already in this file.
+async function deleteMessageForMe(convId, msgId, uid){
+  requireFirebaseConfig();
+  await setDoc(doc(db, 'conversations', convId, 'messages', msgId), {
+    deletedFor: arrayUnion(uid),
+  }, { merge:true });
+}
+
+// "Delete for everyone" — tombstones the message for both participants.
+// Only ever called after confirmAndDeleteMessage() has already verified
+// the caller is the message's own sender (see the UI section below);
+// the Firestore rule enforces the same restriction server-side
+// regardless, so this can never succeed for someone else's message even
+// if that client-side check were somehow bypassed.
+async function deleteMessageForEveryone(convId, msgId){
+  requireFirebaseConfig();
+  await setDoc(doc(db, 'conversations', convId, 'messages', msgId), {
+    deletedForEveryone: true,
+  }, { merge:true });
+}
+
 // Live-subscribes to this user's conversation list, most recently
 // active first, using the denormalized participantsInfo/lastMessage so
 // the Chats panel can render straight from this snapshot with no
@@ -1696,7 +1795,7 @@ const translations = {
       show:'Show', hide:'Hide', cancel:'Cancel', saveChanges:'Save changes',
       close:'Close', back:'Back', avatarTooLarge:'Image is too large (max 700KB).',
       loading:'Loading…', moreOptions:'More options',
-      remove:'Remove', block:'Block', unblock:'Unblock', confirm:'Confirm'
+      remove:'Remove', block:'Block', unblock:'Unblock', confirm:'Confirm', delete:'Delete'
     },
     errors:{
       network:'Something went wrong connecting to HUM. Check your connection and try again.',
@@ -1759,6 +1858,7 @@ const translations = {
       youPrefix:'You: ', blockedNotice:"You've blocked this person.",
       typingIndicator:'Typing...',
       receiptSent:'Sent', receiptRead:'Read',
+      messageDeleted:'This message was deleted',
       voice:{
         record:'Record voice message', stop:'Stop', cancel:'Cancel', recording:'Recording',
         uploading:'Uploading voice message…', sent:'Voice message sent',
@@ -1769,7 +1869,8 @@ const translations = {
       }
     },
     menu:{
-      remove:'Remove', block:'Block', unblock:'Unblock'
+      remove:'Remove', block:'Block', unblock:'Unblock',
+      deleteForMe:'Delete for me', deleteForEveryone:'Delete for everyone'
     },
     confirm:{
       removeTitle:'Remove this chat?',
@@ -1777,7 +1878,11 @@ const translations = {
       blockTitle:'Block {name}?',
       blockBody:"{name} won't be able to message you, and you won't see them in search or your chat list. You can unblock them anytime in Settings.",
       unblockTitle:'Unblock {name}?',
-      unblockBody:"{name} will be able to message you again, and will reappear in search."
+      unblockBody:"{name} will be able to message you again, and will reappear in search.",
+      deleteMeTitle:'Delete this message for you?',
+      deleteMeBody:'This removes the message from your own view only — the other person will still see it.',
+      deleteEveryoneTitle:'Delete this message for everyone?',
+      deleteEveryoneBody:'This replaces the message with "This message was deleted" for both you and {name}. This can\'t be undone.'
     },
     settings:{
       title:'Settings',
@@ -1791,7 +1896,8 @@ const translations = {
     toast:{
       loggedIn:'Welcome back, {name}.', accountCreated:'Account created. Welcome, {name}!',
       loggedOut:'Logged out.', profileSaved:'Profile updated.', langChanged:'Language switched.',
-      chatRemoved:'Chat removed.', userBlocked:'{name} has been blocked.', userUnblocked:'{name} has been unblocked.'
+      chatRemoved:'Chat removed.', userBlocked:'{name} has been blocked.', userUnblocked:'{name} has been unblocked.',
+      messageDeletedForMe:'Message deleted for you.', messageDeletedEveryone:'Message deleted.'
     }
   },
 
@@ -1805,7 +1911,7 @@ const translations = {
       show:'Показать', hide:'Скрыть', cancel:'Отмена', saveChanges:'Сохранить',
       close:'Закрыть', back:'Назад', avatarTooLarge:'Изображение слишком большое (макс. 700КБ).',
       loading:'Загрузка…', moreOptions:'Ещё',
-      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать', confirm:'Подтвердить'
+      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать', confirm:'Подтвердить', delete:'Удалить'
     },
     errors:{
       network:'Не удалось подключиться к HUM. Проверьте соединение и попробуйте снова.',
@@ -1868,6 +1974,7 @@ const translations = {
       youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.',
       typingIndicator:'Печатает...',
       receiptSent:'Отправлено', receiptRead:'Прочитано',
+      messageDeleted:'Это сообщение удалено',
       voice:{
         record:'Записать голосовое сообщение', stop:'Стоп', cancel:'Отмена', recording:'Запись',
         uploading:'Загрузка голосового сообщения…', sent:'Голосовое сообщение отправлено',
@@ -1878,7 +1985,8 @@ const translations = {
       }
     },
     menu:{
-      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать'
+      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать',
+      deleteForMe:'Удалить у меня', deleteForEveryone:'Удалить у всех'
     },
     confirm:{
       removeTitle:'Удалить этот чат?',
@@ -1886,7 +1994,11 @@ const translations = {
       blockTitle:'Заблокировать {name}?',
       blockBody:'{name} не сможет писать вам, и вы не увидите этого пользователя в поиске или списке чатов. Разблокировать можно в любой момент в Настройках.',
       unblockTitle:'Разблокировать {name}?',
-      unblockBody:'{name} снова сможет писать вам и появится в поиске.'
+      unblockBody:'{name} снова сможет писать вам и появится в поиске.',
+      deleteMeTitle:'Удалить это сообщение только у вас?',
+      deleteMeBody:'Сообщение исчезнет только из вашей переписки — у {name} оно останется.',
+      deleteEveryoneTitle:'Удалить это сообщение у всех?',
+      deleteEveryoneBody:'Сообщение будет заменено на «Сообщение удалено» и у вас, и у {name}. Это действие нельзя отменить.'
     },
     settings:{
       title:'Настройки',
@@ -1900,7 +2012,8 @@ const translations = {
     toast:{
       loggedIn:'С возвращением, {name}.', accountCreated:'Аккаунт создан. Добро пожаловать, {name}!',
       loggedOut:'Вы вышли из аккаунта.', profileSaved:'Профиль обновлён.', langChanged:'Язык изменён.',
-      chatRemoved:'Чат удалён.', userBlocked:'{name} заблокирован(а).', userUnblocked:'{name} разблокирован(а).'
+      chatRemoved:'Чат удалён.', userBlocked:'{name} заблокирован(а).', userUnblocked:'{name} разблокирован(а).',
+      messageDeletedForMe:'Сообщение удалено у вас.', messageDeletedEveryone:'Сообщение удалено.'
     }
   },
 
@@ -1914,7 +2027,7 @@ const translations = {
       show:'Ko‘rsatish', hide:'Yashirish', cancel:'Bekor qilish', saveChanges:'Saqlash',
       close:'Yopish', back:'Orqaga', avatarTooLarge:'Rasm hajmi juda katta (maks. 700KB).',
       loading:'Yuklanmoqda…', moreOptions:'Yana',
-      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish', confirm:'Tasdiqlash'
+      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish', confirm:'Tasdiqlash', delete:'Oʻchirish'
     },
     errors:{
       network:'HUM bilan bog‘lanishda xatolik yuz berdi. Aloqani tekshirib, qayta urinib ko‘ring.',
@@ -1977,6 +2090,7 @@ const translations = {
       youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.',
       typingIndicator:'Yozmoqda...',
       receiptSent:'Yuborildi', receiptRead:'Oʻqildi',
+      messageDeleted:'Bu xabar oʻchirildi',
       voice:{
         record:'Ovozli xabar yozish', stop:'Toʻxtatish', cancel:'Bekor qilish', recording:'Yozib olinmoqda',
         uploading:'Ovozli xabar yuklanmoqda…', sent:'Ovozli xabar yuborildi',
@@ -1987,7 +2101,8 @@ const translations = {
       }
     },
     menu:{
-      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish'
+      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish',
+      deleteForMe:'Men uchun o‘chirish', deleteForEveryone:'Hamma uchun o‘chirish'
     },
     confirm:{
       removeTitle:'Bu suhbat olib tashlansinmi?',
@@ -1995,7 +2110,11 @@ const translations = {
       blockTitle:'{name} bloklansinmi?',
       blockBody:'{name} sizga xabar yoza olmaydi va u qidiruv yoki suhbatlar ro‘yxatida ko‘rinmaydi. Istalgan vaqtda Sozlamalarda blokdan chiqarishingiz mumkin.',
       unblockTitle:'{name} blokdan chiqarilsinmi?',
-      unblockBody:'{name} sizga yana xabar yoza oladi va qidiruvda qayta ko‘rinadi.'
+      unblockBody:'{name} sizga yana xabar yoza oladi va qidiruvda qayta ko‘rinadi.',
+      deleteMeTitle:'Bu xabar faqat siz uchun o‘chirilsinmi?',
+      deleteMeBody:'Xabar faqat sizning yozishmangizdan yo‘qoladi — {name} da u qoladi.',
+      deleteEveryoneTitle:'Bu xabar hamma uchun o‘chirilsinmi?',
+      deleteEveryoneBody:'Xabar sizda ham, {name} da ham «Xabar o‘chirildi» matniga almashtiriladi. Buni bekor qilib bo‘lmaydi.'
     },
     settings:{
       title:'Sozlamalar',
@@ -2009,7 +2128,8 @@ const translations = {
     toast:{
       loggedIn:'Xush kelibsiz, {name}.', accountCreated:'Akkount yaratildi. Xush kelibsiz, {name}!',
       loggedOut:'Tizimdan chiqdingiz.', profileSaved:'Profil yangilandi.', langChanged:'Til o‘zgartirildi.',
-      chatRemoved:'Suhbat olib tashlandi.', userBlocked:'{name} bloklandi.', userUnblocked:'{name} blokdan chiqarildi.'
+      chatRemoved:'Suhbat olib tashlandi.', userBlocked:'{name} bloklandi.', userUnblocked:'{name} blokdan chiqarildi.',
+      messageDeletedForMe:'Xabar siz uchun oʻchirildi.', messageDeletedEveryone:'Xabar oʻchirildi.'
     }
   }
 };
@@ -2627,7 +2747,15 @@ function renderChatMessages(){
     els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('common.loading'))}</div>`;
     return;
   }
-  const messages = state.chatMessagesData || [];
+  // "Delete for me" (see deleteMessageForMe/confirmAndDeleteMessage)
+  // hides a message from just the caller's own view — filtered out
+  // here, at render time, exactly as asked, rather than in the data
+  // layer (watchConversationMessages/markMessagesRead still see the
+  // full unfiltered list, so read receipts stay accurate regardless of
+  // what the signed-in user has personally hidden from their own view).
+  const messages = (state.chatMessagesData || []).filter(
+    (m) => !(Array.isArray(m.deletedFor) && m.deletedFor.includes(me.uid)),
+  );
   if(!messages.length){
     els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('chat.emptyTitle'))}</div>`;
     return;
@@ -2635,6 +2763,7 @@ function renderChatMessages(){
   els.chatMessages.innerHTML = messages
     .map((m) => {
       const isOwn = m.from === me.uid;
+      const isDeletedForEveryone = m.deletedForEveryone === true;
       // Read receipts only ever apply to messages the signed-in user
       // sent themselves — an incoming message never shows a
       // ✓/✓✓ mark. `m.readAt` being missing (older messages written
@@ -2644,13 +2773,30 @@ function renderChatMessages(){
       const receiptMarkup = isOwn
         ? `<span class="chat-msg__receipt${m.readAt ? ' chat-msg__receipt--read' : ''}" title="${escapeHtml(t(m.readAt ? 'chat.receiptRead' : 'chat.receiptSent'))}">${m.readAt ? '✓✓' : '✓'}</span>`
         : '';
-      const bubbleMarkup = (m.type === 'voice' && m.voicePath)
-        ? voiceMessageBubbleMarkup(m)
-        : `<div class="chat-msg__bubble">${escapeHtml(m.text)}</div>`;
+      // A tombstoned message shows "This message was deleted" in place
+      // of its original content (text OR voice player) for BOTH
+      // participants — see deleteMessageForEveryone. The original
+      // fields are left alone in Firestore; only rendering hides them.
+      const bubbleMarkup = isDeletedForEveryone
+        ? `<div class="chat-msg__bubble chat-msg__bubble--deleted">${escapeHtml(t('chat.messageDeleted'))}</div>`
+        : (m.type === 'voice' && m.voicePath)
+          ? voiceMessageBubbleMarkup(m)
+          : `<div class="chat-msg__bubble">${escapeHtml(m.text)}</div>`;
+      // The delete-action trigger itself — nothing left to delete on an
+      // already-tombstoned message, so it's simply omitted there rather
+      // than offered redundantly. data-msg-id/data-msg-own live on the
+      // outer .chat-msg container (see the click delegation on
+      // els.chatMessages further down, which reuses this same pattern
+      // as voice playback's data-voice-id/data-voice-path).
+      const menuMarkup = isDeletedForEveryone
+        ? ''
+        : `<button type="button" class="chat-msg__menu-btn" data-msg-menu aria-label="${escapeHtml(t('common.moreOptions'))}">
+             <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>
+           </button>`;
       return `
-        <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}">
+        <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}" data-msg-id="${escapeHtml(m.id || '')}" data-msg-own="${isOwn}">
           ${bubbleMarkup}
-          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}</div>
+          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}${menuMarkup}</div>
         </div>
       `;
     })
@@ -3054,6 +3200,65 @@ function buildPersonActions(otherUser) {
     });
   }
   return actions;
+}
+
+// Builds the "Delete for me" / "Delete for everyone" action list for
+// one message, shared by however this menu gets triggered (see the
+// data-msg-menu click handling further down). "Delete for everyone"
+// only ever appears for the message's own sender — the Firestore rule
+// enforces the same restriction independently, so this is purely a UI
+// convenience, not the actual security boundary.
+function buildMessageActions(convId, message, isOwn) {
+  const actions = [
+    {
+      label: t("menu.deleteForMe"),
+      danger: true,
+      onSelect: () => confirmAndDeleteMessage(convId, message, "me"),
+    },
+  ];
+  if (isOwn) {
+    actions.push({
+      label: t("menu.deleteForEveryone"),
+      danger: true,
+      onSelect: () => confirmAndDeleteMessage(convId, message, "everyone"),
+    });
+  }
+  return actions;
+}
+
+async function confirmAndDeleteMessage(convId, message, mode) {
+  const me = currentUser();
+  if (!me || !message || !message.id) return;
+  const other = state.activeChatUser;
+  const isEveryone = mode === "everyone";
+
+  const confirmed = await openConfirmModal({
+    title: t(isEveryone ? "confirm.deleteEveryoneTitle" : "confirm.deleteMeTitle"),
+    body: t(isEveryone ? "confirm.deleteEveryoneBody" : "confirm.deleteMeBody", {
+      name: other ? other.displayName : "",
+    }),
+    confirmLabel: t("common.delete"),
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  try {
+    if (isEveryone) {
+      await deleteMessageForEveryone(convId, message.id);
+    } else {
+      await deleteMessageForMe(convId, message.id, me.uid);
+    }
+  } catch (e) {
+    console.error("HUM: failed to delete message", e);
+    showToast(t("errors.network"), "error");
+    return;
+  }
+  // No manual re-render needed here: this write lands on the exact same
+  // message doc the open chat's live listener (watchConversationMessages,
+  // wired in openChat) is already subscribed to, so renderChatMessages()
+  // picks up the change and re-renders on its own, same as any other
+  // real-time message update.
+  showToast(t(isEveryone ? "toast.messageDeletedEveryone" : "toast.messageDeletedForMe"), "success");
 }
 
 async function confirmAndRemoveConversation(otherUser) {
@@ -3877,11 +4082,29 @@ els.chatVoiceCancelBtn &&
     cancelVoiceRecording();
   });
 
-// Delegated click handling for voice-message play/pause buttons — has
-// to be delegation, not a per-button listener, since bubbles are torn
-// down and rebuilt on every renderChatMessages() call (see
-// voiceMessageBubbleMarkup above).
+// Delegated click handling for BOTH voice-message play/pause buttons
+// AND the per-message "⋮" delete-menu trigger, in one listener — has to
+// be delegation either way, since bubbles/messages are torn down and
+// rebuilt on every renderChatMessages() call (see voiceMessageBubbleMarkup/
+// renderChatMessages above), and a second listener on the same
+// element+event would be a duplicate rather than an extension.
 els.chatMessages.addEventListener("click", (e) => {
+  const menuBtn = e.target.closest("[data-msg-menu]");
+  if (menuBtn) {
+    e.stopPropagation();
+    const me = currentUser();
+    const other = state.activeChatUser;
+    const msgRow = menuBtn.closest(".chat-msg");
+    if (!me || !other || !msgRow) return;
+    const messageId = msgRow.getAttribute("data-msg-id");
+    const isOwn = msgRow.getAttribute("data-msg-own") === "true";
+    const message = (state.chatMessagesData || []).find((m) => m.id === messageId);
+    if (!message) return;
+    const convId = conversationId(me.uid, other.uid);
+    openActionMenu(menuBtn, buildMessageActions(convId, message, isOwn));
+    return;
+  }
+
   const btn = e.target.closest("[data-voice-play]");
   if (!btn) return;
   const bubble = btn.closest(".chat-msg__bubble--voice");
