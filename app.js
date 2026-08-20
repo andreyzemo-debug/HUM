@@ -507,8 +507,22 @@ if(!FIREBASE_CONFIG_ERROR){
    browser.
 =================================================================== */
 const SUPABASE_URL = "https://hhszykwqoihrmhezaflf.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_oK6aucnFxyzHUb38rrAsJw_y6cEBhhU";
+const SUPABASE_ANON_KEY = "sb_publishable_ТВОЙ_КЛЮЧ";
 const VOICE_BUCKET = "voice-messages";
+// File & Photo Attachments (see the ATTACHMENTS section further down)
+// use a SEPARATE bucket from voice messages — deliberately not mixed
+// into voice-messages — same Supabase project, same anon-key client,
+// same anonymous-auth mechanism (ensureSupabaseAuth below), just a
+// different bucket name and a different Storage policy scope. Requires
+// its own one-time bucket + policy setup in the Supabase console,
+// mirroring voice-messages' (see the setup notes near
+// uploadChatFileBlob further down for the exact policies).
+const CHAT_FILES_BUCKET = "chat-files";
+// Maximum size, per file, accepted for a File/Photo attachment — change
+// this single constant to raise or lower the limit; it's enforced
+// client-side in validateAttachmentFile() before any upload is even
+// attempted (see the ATTACHMENTS section further down).
+const CHAT_FILE_MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 
 const SUPABASE_CONFIGURED =
   !!SUPABASE_URL && !!SUPABASE_ANON_KEY &&
@@ -991,6 +1005,7 @@ function updateVoiceRecordElapsedUI(){
 function setComposerRecordingMode(isRecording){
   if(els.chatInput) els.chatInput.hidden = isRecording;
   if(els.chatMicBtn) els.chatMicBtn.hidden = isRecording;
+  if(els.chatAttachBtn) els.chatAttachBtn.hidden = isRecording;
   if(els.chatSendBtn) els.chatSendBtn.hidden = isRecording;
   if(els.chatVoiceRecordingBar) els.chatVoiceRecordingBar.hidden = !isRecording;
   if(!isRecording && els.chatVoiceRecordTime) els.chatVoiceRecordTime.textContent = '0:00';
@@ -1332,6 +1347,188 @@ async function toggleVoicePlayback(messageId, voicePath){
 }
 
 /* ===================================================================
+   SECTION: ATTACHMENTS (File & Photo — Supabase Storage)
+   A second, independent Supabase bucket alongside voice-messages (see
+   CHAT_FILES_BUCKET above) — same Supabase project, same anon-key
+   client, same anonymous-auth mechanism (ensureSupabaseAuth), never
+   mixed into the voice-messages bucket. Firestore messages carry
+   { type:'image'|'file', filePath, fileName, fileMimeType, fileSize },
+   text stays '' on these — exactly the same "metadata in Firestore,
+   bytes in Supabase" split voice messages already use, just a second
+   bucket/path prefix and a couple more metadata fields.
+
+   Flow mirrors sendVoiceMessage(): validate → upload → Firestore
+   message → (on Firestore failure) best-effort orphan cleanup. The one
+   real difference is MULTIPLE files can be selected at once — each
+   file is validated/uploaded/messaged independently (see
+   sendAttachmentFiles/sendOneAttachment below), so one oversized or
+   failed file in a batch never blocks the others from sending.
+=================================================================== */
+
+// Any image/* is always accepted; this list covers the "common
+// documents/files" the spec asks for. A file whose MIME type the
+// browser couldn't determine at all (file.type === '') is let through
+// rather than blocked — many legitimate files (some .heic photos,
+// certain document variants) report an empty type depending on OS/
+// browser, and the real safety net here is CHAT_FILE_MAX_BYTES plus
+// the fact Supabase only ever stores bytes, never executes anything.
+const CHAT_FILE_ACCEPTED_MIME_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/json',
+];
+function isAcceptedChatFileType(file){
+  if(!file || !file.type) return true;
+  if(file.type.startsWith('image/')) return true;
+  return CHAT_FILE_ACCEPTED_MIME_TYPES.includes(file.type);
+}
+
+// voice-messages/{conversationId}/{uid}/{uniqueFileName}'s exact
+// sibling for chat-files — same structured-path reasoning, just a
+// different bucket and the extension comes from the ORIGINAL filename
+// (falling back to a generic one if the file somehow has none) rather
+// than a MediaRecorder MIME type.
+function uniqueChatFileName(originalName){
+  const dot = (originalName || '').lastIndexOf('.');
+  const ext = dot > 0 && dot < originalName.length - 1 ? originalName.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+  const rand = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return ext ? `${rand}.${ext}` : rand;
+}
+
+// Uploads one File/Blob to Supabase Storage's chat-files bucket and
+// returns the storage path on success, or throws on failure — same
+// upsert:false reasoning as uploadVoiceBlob (every upload gets a fresh
+// random filename, so a collision should never legitimately happen).
+async function uploadChatFileBlob(convId, uid, file){
+  if(!supabase) throw new Error('Supabase is not configured');
+  const ok = await ensureSupabaseAuth();
+  if(!ok) throw new Error('Supabase authentication failed');
+  const path = `${convId}/${uid}/${uniqueChatFileName(file.name)}`;
+  const { error } = await supabase.storage.from(CHAT_FILES_BUCKET).upload(path, file, {
+    contentType: file.type || 'application/octet-stream',
+    upsert: false,
+  });
+  if(error) throw error;
+  return path;
+}
+
+// Best-effort cleanup for an orphaned chat-file upload — mirrors
+// deleteVoiceBlobSafely exactly (never throws; used both when a
+// Firestore write fails right after a successful upload, and when
+// "delete for everyone" tombstones an image/file message — see
+// deleteMessageForEveryone above).
+async function deleteChatFileBlobSafely(path){
+  if(!supabase || !path) return;
+  try {
+    await supabase.storage.from(CHAT_FILES_BUCKET).remove([path]);
+  } catch(e){
+    console.error('HUM: failed to clean up orphaned chat file', path, e);
+  }
+}
+
+// Short-lived signed URL for viewing/downloading a private chat-files
+// object — the bucket is never made public (see the Storage policy
+// notes alongside CHAT_FILES_BUCKET above); this is the "correct
+// client-side access mechanism" the private-bucket requirement calls
+// for, identical in shape to voice playback's createSignedUrl usage.
+async function getChatFileSignedUrl(path){
+  if(!supabase) throw new Error('Supabase is not configured');
+  const ok = await ensureSupabaseAuth();
+  if(!ok) throw new Error('Supabase authentication failed');
+  const { data, error } = await supabase.storage.from(CHAT_FILES_BUCKET).createSignedUrl(path, 3600);
+  if(error || !data || !data.signedUrl) throw error || new Error('Supabase did not return a signed URL');
+  return data.signedUrl;
+}
+
+// Validates one File against size/type limits and reports a specific
+// toast for whichever check fails — called once per file before any
+// upload is attempted (see sendAttachmentFiles below), so a bad file
+// never even reaches the network.
+function validateAttachmentFile(file){
+  if(file.size > CHAT_FILE_MAX_BYTES){
+    showToast(t('chat.attach.tooLarge', { name: file.name }), 'error');
+    return false;
+  }
+  if(!isAcceptedChatFileType(file)){
+    showToast(t('chat.attach.unsupportedType', { name: file.name }), 'error');
+    return false;
+  }
+  return true;
+}
+
+// Full attachment send flow for ONE already-validated file — record →
+// upload → Firestore message, mirroring sendVoiceMessage()'s shape and
+// error-toast posture exactly. Used by sendAttachmentFiles() below, one
+// call per selected file, independently of the others.
+async function sendOneAttachment(me, other, convId, file){
+  const isImage = file.type && file.type.startsWith('image/');
+  showToast(t('chat.attach.uploading', { name: file.name }));
+
+  let path;
+  try {
+    path = await uploadChatFileBlob(convId, me.uid, file);
+  } catch(e){
+    console.error('HUM: attachment upload failed', file.name, e);
+    showToast(t('chat.attach.uploadFailed', { name: file.name }), 'error');
+    return; // nothing uploaded successfully → no Firestore message, per spec
+  }
+
+  try {
+    await addMessage(me, other, '', {
+      type: isImage ? 'image' : 'file',
+      filePath: path,
+      fileName: file.name,
+      fileMimeType: file.type || 'application/octet-stream',
+      fileSize: file.size,
+    });
+    showToast(t('chat.attach.sent', { name: file.name }), 'success');
+  } catch(e){
+    console.error('HUM: failed to create attachment message after upload', file.name, e);
+    showToast(t('errors.sendFailed'), 'error');
+    // Upload succeeded but the message never got created — clean up the
+    // now-orphaned file rather than leaving it in Storage forever.
+    await deleteChatFileBlobSafely(path);
+  }
+}
+
+// Entry point for the attachment file picker (see the els.chatFileInput
+// 'change' listener further down). Multiple files are handled
+// independently — one bad or failed file reports its own error and
+// simply doesn't block the rest of the selection from sending, per
+// "if one upload fails, clean up any successfully uploaded orphan
+// files that were not successfully turned into Firestore messages"
+// (each file's own try/catch in sendOneAttachment already guarantees
+// that per-file, there's nothing additional to coordinate across the
+// batch). An empty FileList (the person opened the picker and
+// cancelled it) is a silent no-op — "graceful cancellation".
+async function sendAttachmentFiles(fileList){
+  const me = currentUser();
+  if(!me || !state.activeChatUser) return;
+  const other = state.activeChatUser;
+  if(state.myBlockedUids.has(other.uid)) return; // attach button is already disabled in this case; extra guard
+
+  const files = Array.from(fileList || []);
+  if(!files.length) return;
+
+  const convId = conversationId(me.uid, other.uid);
+  for(const file of files){
+    if(!validateAttachmentFile(file)) continue;
+    await sendOneAttachment(me, other, convId, file);
+  }
+}
+
+/* ===================================================================
    SECTION: LOCAL (DEVICE-ONLY) STORAGE LAYER
    Only things that are genuinely per-device — language and theme
    preference — still live in localStorage. Accounts and messages are
@@ -1649,12 +1846,27 @@ async function deleteMessageForMe(convId, msgId, uid){
 // the caller is the message's own sender (see the UI section below);
 // the Firestore rule enforces the same restriction server-side
 // regardless, so this can never succeed for someone else's message even
-// if that client-side check were somehow bypassed.
-async function deleteMessageForEveryone(convId, msgId){
+// if that client-side check were somehow bypassed. Takes the full
+// message object (not just its id) so it can also best-effort clean up
+// the underlying Supabase file for a voice/image/file message — that
+// cleanup only ever runs AFTER the tombstone write has already
+// succeeded, and can never fail the deletion itself (see
+// deleteVoiceBlobSafely/deleteChatFileBlobSafely, both already
+// try/catch-wrapped to never throw).
+async function deleteMessageForEveryone(convId, message){
   requireFirebaseConfig();
-  await setDoc(doc(db, 'conversations', convId, 'messages', msgId), {
+  await setDoc(doc(db, 'conversations', convId, 'messages', message.id), {
     deletedForEveryone: true,
   }, { merge:true });
+  if(message.type === 'voice' && message.voicePath){
+    await deleteVoiceBlobSafely(message.voicePath);
+  } else if((message.type === 'image' || message.type === 'file') && message.filePath){
+    await deleteChatFileBlobSafely(message.filePath);
+  }
+  // "Delete for me" never touches Storage at all — the shared file may
+  // still be needed by the other participant, who hasn't deleted
+  // anything (see deleteMessageForMe above and confirmAndDeleteMessage
+  // in the UI section, neither of which calls into Storage).
 }
 
 // Live-subscribes to this user's conversation list, most recently
@@ -1866,6 +2078,15 @@ const translations = {
         recordFailed:'Recording failed', emptyRecording:'Recording was too short',
         uploadFailed:'Upload failed', playbackError:'Playback error',
         play:'Play voice message', pause:'Pause voice message', listPreview:'🎤 Voice message'
+      },
+      attach:{
+        button:'Attach file', uploading:'Uploading {name}…', sent:'Sent {name}',
+        uploadFailed:'Failed to upload {name}',
+        tooLarge:'File "{name}" is too large (max 20 MB).',
+        unsupportedType:'File "{name}" isn\'t a supported type.',
+        image:'Photo', fileFallbackName:'File', download:'Download',
+        downloadFailed:'Failed to open file', imageLoadFailed:'Failed to load image',
+        listPreviewPhoto:'📷 Photo', listPreviewFile:'📎 File: {name}'
       }
     },
     menu:{
@@ -1982,6 +2203,15 @@ const translations = {
         recordFailed:'Ошибка записи', emptyRecording:'Запись слишком короткая',
         uploadFailed:'Ошибка загрузки', playbackError:'Ошибка воспроизведения',
         play:'Воспроизвести голосовое сообщение', pause:'Приостановить голосовое сообщение', listPreview:'🎤 Голосовое сообщение'
+      },
+      attach:{
+        button:'Прикрепить файл', uploading:'Загрузка {name}…', sent:'{name} отправлен(о)',
+        uploadFailed:'Не удалось загрузить {name}',
+        tooLarge:'Файл «{name}» слишком большой (макс. 20 МБ).',
+        unsupportedType:'Файл «{name}» неподдерживаемого типа.',
+        image:'Фото', fileFallbackName:'Файл', download:'Скачать',
+        downloadFailed:'Не удалось открыть файл', imageLoadFailed:'Не удалось загрузить изображение',
+        listPreviewPhoto:'📷 Фото', listPreviewFile:'📎 Файл: {name}'
       }
     },
     menu:{
@@ -2098,6 +2328,15 @@ const translations = {
         recordFailed:'Yozib olishda xatolik', emptyRecording:'Yozuv juda qisqa',
         uploadFailed:'Yuklashda xatolik', playbackError:'Ijro etishda xatolik',
         play:'Ovozli xabarni ijro etish', pause:'Ovozli xabarni pauza qilish', listPreview:'🎤 Ovozli xabar'
+      },
+      attach:{
+        button:'Fayl biriktirish', uploading:'{name} yuklanmoqda…', sent:'{name} yuborildi',
+        uploadFailed:'{name} yuklanmadi',
+        tooLarge:'«{name}» fayli juda katta (maks. 20 MB).',
+        unsupportedType:'«{name}» fayli qoʻllab-quvvatlanmaydigan turda.',
+        image:'Rasm', fileFallbackName:'Fayl', download:'Yuklab olish',
+        downloadFailed:'Faylni ochib boʻlmadi', imageLoadFailed:'Rasmni yuklab boʻlmadi',
+        listPreviewPhoto:'📷 Rasm', listPreviewFile:'📎 Fayl: {name}'
       }
     },
     menu:{
@@ -2638,10 +2877,17 @@ function renderProfileSummary(container, user){
 function renderChatsListRow(user, otherUid, lastMessage, meUid){
   const isOwn = lastMessage.from === meUid;
   const prefix = isOwn ? t('chat.youPrefix') : '';
-  // A voice message's `text` is always '' (see addMessage/
-  // sendVoiceMessage) — show a translated label instead of a blank
-  // preview rather than teaching this row about every message type.
-  const bodyText = lastMessage.type === 'voice' ? t('chat.voice.listPreview') : lastMessage.text;
+  // A voice/image/file message's `text` is always '' (see addMessage/
+  // sendVoiceMessage/sendOneAttachment) — show a translated label
+  // instead of a blank preview rather than teaching this row about
+  // every message type's own fields.
+  const bodyText = lastMessage.type === 'voice'
+    ? t('chat.voice.listPreview')
+    : lastMessage.type === 'image'
+      ? t('chat.attach.listPreviewPhoto')
+      : lastMessage.type === 'file'
+        ? t('chat.attach.listPreviewFile', { name: lastMessage.fileName || '' })
+        : lastMessage.text;
   const previewText = (prefix + bodyText).replace(/\s+/g, ' ').trim();
   return `
     <div class="result-row" data-username="${escapeHtml(user.username)}" role="button" tabindex="0">
@@ -2774,14 +3020,19 @@ function renderChatMessages(){
         ? `<span class="chat-msg__receipt${m.readAt ? ' chat-msg__receipt--read' : ''}" title="${escapeHtml(t(m.readAt ? 'chat.receiptRead' : 'chat.receiptSent'))}">${m.readAt ? '✓✓' : '✓'}</span>`
         : '';
       // A tombstoned message shows "This message was deleted" in place
-      // of its original content (text OR voice player) for BOTH
-      // participants — see deleteMessageForEveryone. The original
-      // fields are left alone in Firestore; only rendering hides them.
+      // of its original content (text OR voice player OR attachment)
+      // for BOTH participants — see deleteMessageForEveryone. The
+      // original fields are left alone in Firestore; only rendering
+      // hides them.
       const bubbleMarkup = isDeletedForEveryone
         ? `<div class="chat-msg__bubble chat-msg__bubble--deleted">${escapeHtml(t('chat.messageDeleted'))}</div>`
         : (m.type === 'voice' && m.voicePath)
           ? voiceMessageBubbleMarkup(m)
-          : `<div class="chat-msg__bubble">${escapeHtml(m.text)}</div>`;
+          : (m.type === 'image' && m.filePath)
+            ? imageMessageBubbleMarkup(m)
+            : (m.type === 'file' && m.filePath)
+              ? fileMessageBubbleMarkup(m)
+              : `<div class="chat-msg__bubble">${escapeHtml(m.text)}</div>`;
       // The delete-action trigger itself — nothing left to delete on an
       // already-tombstoned message, so it's simply omitted there rather
       // than offered redundantly. data-msg-id/data-msg-own live on the
@@ -2808,6 +3059,9 @@ function renderChatMessages(){
   // instead of it flashing back to "not playing" until the next
   // 'timeupdate' tick.
   syncVoicePlayersUI();
+  // Same "sync render, then hydrate async details" idea for image
+  // attachments — fills in signed URLs for any still-loading placeholder.
+  hydrateChatFileImages();
 }
 
 // Compact HUM-style voice-message player, used in place of the normal
@@ -2837,6 +3091,131 @@ function voiceMessageBubbleMarkup(m){
 // wired near the rest of the composer/chat event listeners further
 // down (after `els` is defined) — see the els.chatMessages listener
 // alongside els.chatComposerForm/els.chatInput below.
+
+// Signed URLs for private chat-files objects are short-lived (see
+// getChatFileSignedUrl's 3600s) but a chat can easily stay open longer
+// than that and re-renders (new messages, read receipts) happen
+// constantly — caching per messageId avoids re-fetching a URL on every
+// single re-render, while still refreshing well before Supabase's own
+// URL would actually expire.
+const chatFileSignedUrlCache = new Map(); // messageId -> { url, expiresAt }
+const CHAT_FILE_SIGNED_URL_TTL_MS = 55 * 60 * 1000;
+
+function getCachedChatFileUrl(messageId){
+  const entry = chatFileSignedUrlCache.get(messageId);
+  return (entry && entry.expiresAt > Date.now()) ? entry.url : null;
+}
+
+function formatFileSize(bytes){
+  const n = Number(bytes) || 0;
+  if(n < 1024) return `${n} B`;
+  if(n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+function fileExtensionLabel(fileName){
+  const dot = (fileName || '').lastIndexOf('.');
+  return (dot > 0 && dot < fileName.length - 1) ? fileName.slice(dot + 1).toUpperCase() : '';
+}
+
+// Image-attachment bubble. If a still-fresh signed URL is already
+// cached (see chatFileSignedUrlCache above), it's used immediately so
+// a re-render (e.g. a read receipt ticking in elsewhere in the chat)
+// never re-flashes a loading placeholder for an image that was already
+// showing fine — otherwise renders a placeholder that
+// hydrateChatFileImages() (called at the end of renderChatMessages)
+// fills in asynchronously. Clicking the image opens the lightbox (see
+// the els.chatMessages click delegation further down).
+function imageMessageBubbleMarkup(m){
+  const cachedUrl = getCachedChatFileUrl(m.id);
+  const inner = cachedUrl
+    ? `<img class="chat-img" src="${escapeHtml(cachedUrl)}" alt="${escapeHtml(t('chat.attach.image'))}" data-file-img loading="lazy" />`
+    : `<div class="chat-img chat-img--loading" data-file-img-placeholder></div>`;
+  return `
+    <div class="chat-msg__bubble chat-msg__bubble--image" data-file-id="${escapeHtml(m.id || '')}" data-file-path="${escapeHtml(m.filePath)}">
+      ${inner}
+    </div>
+  `;
+}
+
+// Non-image attachment bubble — filename/extension/size plus a
+// download button. Unlike images, the signed URL here is fetched only
+// on demand (see the data-file-download click handling further down),
+// not eagerly on render, since a file bubble doesn't need to display
+// its own content inline the way an image does.
+function fileMessageBubbleMarkup(m){
+  const ext = fileExtensionLabel(m.fileName) || '?';
+  return `
+    <div class="chat-msg__bubble chat-msg__bubble--file" data-file-id="${escapeHtml(m.id || '')}" data-file-path="${escapeHtml(m.filePath)}" data-file-name="${escapeHtml(m.fileName || '')}">
+      <div class="chat-file__icon" aria-hidden="true">${escapeHtml(ext)}</div>
+      <div class="chat-file__info">
+        <div class="chat-file__name">${escapeHtml(m.fileName || t('chat.attach.fileFallbackName'))}</div>
+        <div class="chat-file__meta">${escapeHtml(formatFileSize(m.fileSize))}</div>
+      </div>
+      <button type="button" class="chat-file__download" data-file-download aria-label="${escapeHtml(t('chat.attach.download'))}" title="${escapeHtml(t('chat.attach.download'))}">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  `;
+}
+
+// Fills in every still-loading image-attachment placeholder currently
+// in the DOM with a real signed URL, one Supabase call per not-yet-
+// cached image. Called at the end of renderChatMessages() (same "sync
+// render, then hydrate async details" pattern voice playback's
+// syncVoicePlayersUI already uses). data-loading guards against
+// double-fetching the same node if another render fires while a
+// request is still in flight.
+function hydrateChatFileImages(){
+  if(!els.chatMessages) return;
+  els.chatMessages.querySelectorAll('[data-file-img-placeholder]').forEach((placeholder) => {
+    if(placeholder.getAttribute('data-loading') === 'true') return;
+    const bubble = placeholder.closest('.chat-msg__bubble--image');
+    if(!bubble) return;
+    const messageId = bubble.getAttribute('data-file-id');
+    const filePath = bubble.getAttribute('data-file-path');
+    if(!messageId || !filePath) return;
+    placeholder.setAttribute('data-loading', 'true');
+    getChatFileSignedUrl(filePath)
+      .then((url) => {
+        chatFileSignedUrlCache.set(messageId, { url, expiresAt: Date.now() + CHAT_FILE_SIGNED_URL_TTL_MS });
+        if(!els.chatMessages) return;
+        let selector;
+        try {
+          selector = `.chat-msg__bubble--image[data-file-id="${CSS.escape(messageId)}"]`;
+        } catch(e){
+          return;
+        }
+        // Re-query fresh rather than trusting the captured `bubble`
+        // node is still attached — another render may have already
+        // rebuilt the message list while this fetch was in flight.
+        const freshBubble = els.chatMessages.querySelector(selector);
+        if(!freshBubble) return;
+        freshBubble.innerHTML = `<img class="chat-img" src="${escapeHtml(url)}" alt="${escapeHtml(t('chat.attach.image'))}" data-file-img loading="lazy" />`;
+      })
+      .catch((e) => {
+        console.error('HUM: failed to load image attachment', filePath, e);
+        placeholder.removeAttribute('data-loading');
+        placeholder.classList.add('chat-img--error');
+        placeholder.setAttribute('aria-label', t('chat.attach.imageLoadFailed'));
+      });
+  });
+}
+
+// Image lightbox — a larger preview shown when an image attachment
+// bubble is tapped (see the els.chatMessages click delegation further
+// down). Reuses the exact same .modal-backdrop shell the confirm modal
+// already uses (see #imageLightboxBackdrop in index.html), just with
+// image-specific inner content instead of a text dialog.
+function openImageLightbox(url){
+  if(!els.imageLightboxBackdrop || !els.imageLightboxImg) return;
+  els.imageLightboxImg.src = url;
+  els.imageLightboxBackdrop.hidden = false;
+}
+function closeImageLightbox(){
+  if(!els.imageLightboxBackdrop) return;
+  els.imageLightboxBackdrop.hidden = true;
+  if(els.imageLightboxImg) els.imageLightboxImg.src = '';
+}
 
 /* ===================================================================
    SECTION: APPLICATION UI — state, elements, event wiring, init
@@ -2888,6 +3267,12 @@ const els = {
   chatVoiceRecordTime: document.getElementById("chatVoiceRecordTime"),
   chatVoiceCancelBtn: document.getElementById("chatVoiceCancelBtn"),
   chatVoiceStopBtn: document.getElementById("chatVoiceStopBtn"),
+  chatAttachBtn: document.getElementById("chatAttachBtn"),
+  chatFileInput: document.getElementById("chatFileInput"),
+
+  imageLightboxBackdrop: document.getElementById("imageLightboxBackdrop"),
+  imageLightboxImg: document.getElementById("imageLightboxImg"),
+  imageLightboxCloseBtn: document.getElementById("imageLightboxCloseBtn"),
 
   profileEditToggle: document.getElementById("profileEditToggle"),
   profileSummary: document.getElementById("profileSummary"),
@@ -3244,7 +3629,7 @@ async function confirmAndDeleteMessage(convId, message, mode) {
 
   try {
     if (isEveryone) {
-      await deleteMessageForEveryone(convId, message.id);
+      await deleteMessageForEveryone(convId, message);
     } else {
       await deleteMessageForMe(convId, message.id, me.uid);
     }
@@ -3389,6 +3774,7 @@ function applyChatBlockState() {
   if (els.chatInput) els.chatInput.disabled = blocked;
   if (els.chatSendBtn) els.chatSendBtn.disabled = blocked;
   if (els.chatMicBtn) els.chatMicBtn.disabled = blocked;
+  if (els.chatAttachBtn) els.chatAttachBtn.disabled = blocked;
   if (blocked && els.chatInput) els.chatInput.value = "";
   // A disabled composer can no longer fire "input" events, so nothing
   // would otherwise clear a typing flag left over from just before the
@@ -4082,6 +4468,39 @@ els.chatVoiceCancelBtn &&
     cancelVoiceRecording();
   });
 
+// File & Photo Attachments: the attach button just opens the native
+// file picker (a hidden <input type="file" multiple>, see index.html);
+// the actual upload flow starts from its 'change' event, mirroring how
+// the mic button starts recording. Resetting .value after reading
+// files lets the SAME file be picked again in a row (browsers don't
+// fire 'change' a second time for an unchanged selection otherwise).
+els.chatAttachBtn &&
+  els.chatAttachBtn.addEventListener("click", () => {
+    if (els.chatFileInput) els.chatFileInput.click();
+  });
+els.chatFileInput &&
+  els.chatFileInput.addEventListener("change", () => {
+    const files = els.chatFileInput.files;
+    els.chatFileInput.value = "";
+    sendAttachmentFiles(files);
+  });
+
+// Image lightbox: backdrop click (outside the image) or the close
+// button dismiss it, same interaction pattern as the confirm modal.
+els.imageLightboxBackdrop &&
+  els.imageLightboxBackdrop.addEventListener("click", (e) => {
+    if (e.target === els.imageLightboxBackdrop) closeImageLightbox();
+  });
+els.imageLightboxCloseBtn &&
+  els.imageLightboxCloseBtn.addEventListener("click", () => {
+    closeImageLightbox();
+  });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && els.imageLightboxBackdrop && !els.imageLightboxBackdrop.hidden) {
+    closeImageLightbox();
+  }
+});
+
 // Delegated click handling for BOTH voice-message play/pause buttons
 // AND the per-message "⋮" delete-menu trigger, in one listener — has to
 // be delegation either way, since bubbles/messages are torn down and
@@ -4102,6 +4521,39 @@ els.chatMessages.addEventListener("click", (e) => {
     if (!message) return;
     const convId = conversationId(me.uid, other.uid);
     openActionMenu(menuBtn, buildMessageActions(convId, message, isOwn));
+    return;
+  }
+
+  // Tapping an image attachment opens the lightbox — reuses whatever
+  // signed URL is already showing (the <img>'s own src), so this never
+  // needs a fresh Supabase call of its own.
+  const img = e.target.closest("[data-file-img]");
+  if (img) {
+    openImageLightbox(img.src);
+    return;
+  }
+
+  // A file attachment's download button fetches a signed URL on demand
+  // (see getChatFileSignedUrl) and opens it in a new tab — the browser
+  // handles the actual save/open from there, same as any normal
+  // download link.
+  const downloadBtn = e.target.closest("[data-file-download]");
+  if (downloadBtn) {
+    const bubble = downloadBtn.closest(".chat-msg__bubble--file");
+    const filePath = bubble && bubble.getAttribute("data-file-path");
+    if (!filePath) return;
+    downloadBtn.disabled = true;
+    getChatFileSignedUrl(filePath)
+      .then((url) => {
+        window.open(url, "_blank", "noopener");
+      })
+      .catch((e2) => {
+        console.error("HUM: failed to open attachment", filePath, e2);
+        showToast(t("chat.attach.downloadFailed"), "error");
+      })
+      .finally(() => {
+        downloadBtn.disabled = false;
+      });
     return;
   }
 
