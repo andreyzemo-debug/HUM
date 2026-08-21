@@ -413,31 +413,38 @@ const FIREBASE_CONFIG = {
 // message (see the #firebaseConfigError screen in index.html) and every
 // Firebase call is skipped until it's fixed — nothing here is silently
 // swallowed, it's surfaced once, clearly, at the source.
-function validateFirebaseConfig(config){
-  const required = ["apiKey","authDomain","projectId","storageBucket","messagingSenderId","appId"];
-  for(const key of required){
+function validateFirebaseConfig(config) {
+  const required = [
+    "apiKey",
+    "authDomain",
+    "projectId",
+    "storageBucket",
+    "messagingSenderId",
+    "appId",
+  ];
+  for (const key of required) {
     const value = config[key];
-    if(!value || typeof value !== "string" || !value.trim()){
+    if (!value || typeof value !== "string" || !value.trim()) {
       return `FIREBASE_CONFIG.${key} is missing.`;
     }
-    if(/YOUR_[A-Z0-9_]+/.test(value)){
+    if (/YOUR_[A-Z0-9_]+/.test(value)) {
       return `FIREBASE_CONFIG.${key} is still the placeholder value ("${value}") — replace it with your real Firebase project's value.`;
     }
   }
-  if(!/^AIza[0-9A-Za-z_-]{20,}$/.test(config.apiKey)){
+  if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(config.apiKey)) {
     return `FIREBASE_CONFIG.apiKey ("${config.apiKey}") doesn't look like a real Firebase Web API key — they normally start with "AIza". Double-check you copied it from Project settings → General → "Your apps" in the Firebase console (not a server/admin key from somewhere else).`;
   }
-  if(!config.authDomain.includes(".")){
+  if (!config.authDomain.includes(".")) {
     return `FIREBASE_CONFIG.authDomain ("${config.authDomain}") doesn't look like a valid domain — expected something like "your-project.firebaseapp.com".`;
   }
-  if(!/^\d+$/.test(config.messagingSenderId)){
+  if (!/^\d+$/.test(config.messagingSenderId)) {
     return `FIREBASE_CONFIG.messagingSenderId ("${config.messagingSenderId}") should be all digits — double-check you copied the right value from the Firebase console.`;
   }
   return null;
 }
 
 const FIREBASE_CONFIG_ERROR = validateFirebaseConfig(FIREBASE_CONFIG);
-if(FIREBASE_CONFIG_ERROR){
+if (FIREBASE_CONFIG_ERROR) {
   // Deliberately not suppressed: this is the one clear diagnostic that
   // replaces what would otherwise be a wall of repeated 400s.
   console.error("[HUM] Firebase is not configured:", FIREBASE_CONFIG_ERROR);
@@ -449,8 +456,8 @@ if(FIREBASE_CONFIG_ERROR){
 // dedicated setup screen instead of the auth/app screens — this is a
 // second layer of defense so a bad config can never result in a real
 // network call, from any code path, now or after future changes.
-function requireFirebaseConfig(){
-  if(FIREBASE_CONFIG_ERROR){
+function requireFirebaseConfig() {
+  if (FIREBASE_CONFIG_ERROR) {
     throw new Error("Firebase is not configured: " + FIREBASE_CONFIG_ERROR);
   }
 }
@@ -478,10 +485,13 @@ let rtdb = null;
 try {
   rtdb = getDatabase(firebaseApp);
 } catch (e) {
-  console.error("[HUM] Realtime Database is not configured (online/offline status will be unavailable, everything else is unaffected):", e);
+  console.error(
+    "[HUM] Realtime Database is not configured (online/offline status will be unavailable, everything else is unaffected):",
+    e,
+  );
 }
 
-if(!FIREBASE_CONFIG_ERROR){
+if (!FIREBASE_CONFIG_ERROR) {
   // Keeps the signed-in session across page reloads/tabs on this device
   // (Firebase's own equivalent of the old hum_session localStorage key —
   // see the onAuthStateChanged listener further down, which is what now
@@ -507,7 +517,7 @@ if(!FIREBASE_CONFIG_ERROR){
    browser.
 =================================================================== */
 const SUPABASE_URL = "https://hhszykwqoihrmhezaflf.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_ТВОЙ_КЛЮЧ";
+const SUPABASE_ANON_KEY = "sb_publishable_oK6aucnFxyzHUb38rrAsJw_y6cEBhhU";
 const VOICE_BUCKET = "voice-messages";
 // File & Photo Attachments (see the ATTACHMENTS section further down)
 // use a SEPARATE bucket from voice messages — deliberately not mixed
@@ -525,8 +535,10 @@ const CHAT_FILES_BUCKET = "chat-files";
 const CHAT_FILE_MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 
 const SUPABASE_CONFIGURED =
-  !!SUPABASE_URL && !!SUPABASE_ANON_KEY &&
-  !SUPABASE_URL.includes("YOUR_SUPABASE") && !SUPABASE_ANON_KEY.includes("YOUR_SUPABASE");
+  !!SUPABASE_URL &&
+  !!SUPABASE_ANON_KEY &&
+  !SUPABASE_URL.includes("YOUR_SUPABASE") &&
+  !SUPABASE_ANON_KEY.includes("YOUR_SUPABASE");
 
 // Wrapped in try/catch for the same reason `rtdb`'s init is above: this
 // whole file is one module, so letting a Supabase init error escape
@@ -535,14 +547,19 @@ const SUPABASE_CONFIGURED =
 // function below already checks for that and fails toward "voice
 // messages are unavailable" rather than crashing anything else.
 let supabase = null;
-if(SUPABASE_CONFIGURED){
+if (SUPABASE_CONFIGURED) {
   try {
     supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  } catch(e){
-    console.error("[HUM] Supabase failed to initialize (voice messages will be unavailable):", e);
+  } catch (e) {
+    console.error(
+      "[HUM] Supabase failed to initialize (voice messages will be unavailable):",
+      e,
+    );
   }
 } else {
-  console.warn("[HUM] Supabase is not configured — voice messages are disabled until SUPABASE_URL/SUPABASE_ANON_KEY are filled in above.");
+  console.warn(
+    "[HUM] Supabase is not configured — voice messages are disabled until SUPABASE_URL/SUPABASE_ANON_KEY are filled in above.",
+  );
 }
 
 // Your `voice-messages` bucket's policies ("authenticated users" for
@@ -562,18 +579,21 @@ if(SUPABASE_CONFIGURED){
 // on, every upload/playback below will fail even with a correct URL
 // and anon key, since there'd be nothing for this to sign in AS.
 let supabaseAuthReady = null;
-function ensureSupabaseAuth(){
-  if(!supabase) return Promise.resolve(false);
-  if(supabaseAuthReady) return supabaseAuthReady;
+function ensureSupabaseAuth() {
+  if (!supabase) return Promise.resolve(false);
+  if (supabaseAuthReady) return supabaseAuthReady;
   supabaseAuthReady = (async () => {
     try {
       const { data } = await supabase.auth.getSession();
-      if(data && data.session) return true;
+      if (data && data.session) return true;
       const { error } = await supabase.auth.signInAnonymously();
-      if(error) throw error;
+      if (error) throw error;
       return true;
-    } catch(e){
-      console.error("[HUM] Supabase anonymous sign-in failed (voice messages will be unavailable):", e);
+    } catch (e) {
+      console.error(
+        "[HUM] Supabase anonymous sign-in failed (voice messages will be unavailable):",
+        e,
+      );
       supabaseAuthReady = null; // let the next attempt retry instead of staying stuck on one failure
       return false;
     }
@@ -617,8 +637,8 @@ function emailForUsername(username) {
        any other timer-based guess.
 =================================================================== */
 
-function presenceRef(uid){
-  return rtdbRef(rtdb, 'presence/' + uid);
+function presenceRef(uid) {
+  return rtdbRef(rtdb, "presence/" + uid);
 }
 
 // Set while startPresence() has a live .info/connected listener
@@ -633,16 +653,16 @@ let presenceConnectedUnsub = null;
 // navigating away, network loss, the process being killed, anything.
 // Safe to call more than once (a stale listener is always torn down
 // first via stopPresenceListener()).
-function startPresence(uid){
+function startPresence(uid) {
   // rtdb is null when Realtime Database couldn't be initialized (see
   // where it's created above) — presence just stays off in that case
   // rather than throwing, so the rest of HUM (which doesn't depend on
   // it) is completely unaffected.
-  if(!rtdb || !uid) return;
+  if (!rtdb || !uid) return;
   requireFirebaseConfig();
   stopPresenceListener();
   const myPresenceRef = presenceRef(uid);
-  const connectedRef = rtdbRef(rtdb, '.info/connected');
+  const connectedRef = rtdbRef(rtdb, ".info/connected");
   // .info/connected is Realtime Database's own "am I actually connected
   // to the server right now" flag — distinct from "is someone
   // authenticated in this tab" (that's `uid` even being passed in at
@@ -651,31 +671,38 @@ function startPresence(uid){
   // onDisconnect() gets re-armed inside this callback instead of once
   // outside it — a disconnect handler only covers the CURRENT
   // connection; a fresh one is needed for each new one.
-  presenceConnectedUnsub = onValue(connectedRef, (snap) => {
-    if (snap.val() !== true) return; // not connected (yet, or anymore) — nothing to arm or set
-    // Register onDisconnect() BEFORE writing "online" — arming it
-    // first closes the race where the connection could drop in the
-    // gap between the two writes, which would otherwise leave this
-    // user stuck showing online with no disconnect handler ever having
-    // been registered to correct it.
-    onDisconnect(myPresenceRef)
-      .set({ state: 'offline', lastChanged: rtdbServerTimestamp() })
-      .then(() => {
-        rtdbSet(myPresenceRef, { state: 'online', lastChanged: rtdbServerTimestamp() });
-      })
-      .catch((e) => {
-        console.error('HUM: failed to arm presence onDisconnect', e);
-      });
-  }, (e) => {
-    console.error('HUM: presence .info/connected listener failed', e);
-  });
+  presenceConnectedUnsub = onValue(
+    connectedRef,
+    (snap) => {
+      if (snap.val() !== true) return; // not connected (yet, or anymore) — nothing to arm or set
+      // Register onDisconnect() BEFORE writing "online" — arming it
+      // first closes the race where the connection could drop in the
+      // gap between the two writes, which would otherwise leave this
+      // user stuck showing online with no disconnect handler ever having
+      // been registered to correct it.
+      onDisconnect(myPresenceRef)
+        .set({ state: "offline", lastChanged: rtdbServerTimestamp() })
+        .then(() => {
+          rtdbSet(myPresenceRef, {
+            state: "online",
+            lastChanged: rtdbServerTimestamp(),
+          });
+        })
+        .catch((e) => {
+          console.error("HUM: failed to arm presence onDisconnect", e);
+        });
+    },
+    (e) => {
+      console.error("HUM: presence .info/connected listener failed", e);
+    },
+  );
 }
 
 // Detaches this device's own .info/connected listener (does NOT write
 // "offline" — that's goOfflineNow()). Used when tearing down the
 // signed-in session's own state, e.g. inside stopAllConversationWatchers.
-function stopPresenceListener(){
-  if(presenceConnectedUnsub){
+function stopPresenceListener() {
+  if (presenceConnectedUnsub) {
     presenceConnectedUnsub();
     presenceConnectedUnsub = null;
   }
@@ -689,13 +716,16 @@ function stopPresenceListener(){
 // but that can lag by a little; writing it directly on an intentional
 // logout makes the other person's screen update immediately instead of
 // waiting on it.
-async function goOfflineNow(uid){
+async function goOfflineNow(uid) {
   stopPresenceListener();
-  if(!rtdb || !uid) return;
+  if (!rtdb || !uid) return;
   try {
-    await rtdbSet(presenceRef(uid), { state: 'offline', lastChanged: rtdbServerTimestamp() });
-  } catch(e){
-    console.error('HUM: failed to set presence offline on logout', e);
+    await rtdbSet(presenceRef(uid), {
+      state: "offline",
+      lastChanged: rtdbServerTimestamp(),
+    });
+  } catch (e) {
+    console.error("HUM: failed to set presence offline on logout", e);
   }
 }
 
@@ -707,18 +737,22 @@ async function goOfflineNow(uid){
 // finishes its first write) is treated as offline, never online.
 // Returns an unsubscribe function (a no-op one if Realtime Database
 // isn't available, so callers never need to null-check the return).
-function watchPresence(uid, onChange){
-  if(!rtdb || !uid){
+function watchPresence(uid, onChange) {
+  if (!rtdb || !uid) {
     onChange(false);
     return () => {};
   }
-  return onValue(presenceRef(uid), (snap) => {
-    const val = snap.val();
-    onChange(!!val && val.state === 'online');
-  }, (err) => {
-    console.error('HUM: presence listener failed', err);
-    onChange(false);
-  });
+  return onValue(
+    presenceRef(uid),
+    (snap) => {
+      const val = snap.val();
+      onChange(!!val && val.state === "online");
+    },
+    (err) => {
+      console.error("HUM: presence listener failed", err);
+      onChange(false);
+    },
+  );
 }
 
 // Every screen that lists OTHER people (Chats, People Search, a
@@ -732,9 +766,9 @@ function watchPresence(uid, onChange){
 // own scope's old listeners before attaching new ones.
 const presenceWatchersByScope = new Map();
 
-function clearPresenceWatchers(scope){
+function clearPresenceWatchers(scope) {
   const list = presenceWatchersByScope.get(scope);
-  if(list) list.forEach(({ unsub }) => unsub());
+  if (list) list.forEach(({ unsub }) => unsub());
   presenceWatchersByScope.set(scope, []);
 }
 
@@ -743,17 +777,17 @@ function clearPresenceWatchers(scope){
 // green-dot indicator — see .avatar--online::after in style.css) on
 // every element inside `container` marked data-presence-uid="uid",
 // live, for as long as `scope`'s listeners haven't since been cleared.
-function watchPresenceForScope(scope, uid, container){
+function watchPresenceForScope(scope, uid, container) {
   const unsub = watchPresence(uid, (isOnline) => {
-    if(!container || !container.isConnected) return;
+    if (!container || !container.isConnected) return;
     let selector;
     try {
       selector = `[data-presence-uid="${CSS.escape(uid)}"]`;
-    } catch(e){
+    } catch (e) {
       return; // uid somehow isn't valid to select on — skip rather than throw
     }
     container.querySelectorAll(selector).forEach((el) => {
-      el.classList.toggle('avatar--online', isOnline);
+      el.classList.toggle("avatar--online", isOnline);
     });
   });
   const list = presenceWatchersByScope.get(scope) || [];
@@ -784,7 +818,7 @@ function watchPresenceForScope(scope, uid, container){
        "@username" and the translated "typing…" string.
 =================================================================== */
 
-function typingRef(convId, uid){
+function typingRef(convId, uid) {
   return rtdbRef(rtdb, `typing/${convId}/${uid}`);
 }
 
@@ -792,12 +826,12 @@ function typingRef(convId, uid){
 // one conversation. Never used to write anyone else's node — every
 // call site below passes currentUser().uid, and the Realtime Database
 // rules enforce that server-side regardless.
-async function setTypingState(convId, uid, isTyping){
-  if(!rtdb || !convId || !uid) return;
+async function setTypingState(convId, uid, isTyping) {
+  if (!rtdb || !convId || !uid) return;
   try {
     await rtdbSet(typingRef(convId, uid), isTyping ? true : null);
-  } catch(e){
-    console.error('HUM: failed to update typing state', e);
+  } catch (e) {
+    console.error("HUM: failed to update typing state", e);
   }
 }
 
@@ -806,17 +840,21 @@ async function setTypingState(convId, uid, isTyping){
 // data) as "not typing" — same not-a-guess posture as watchPresence().
 // Returns an unsubscribe function (a no-op one if Realtime Database
 // isn't available).
-function watchTyping(convId, otherUid, onChange){
-  if(!rtdb || !convId || !otherUid){
+function watchTyping(convId, otherUid, onChange) {
+  if (!rtdb || !convId || !otherUid) {
     onChange(false);
     return () => {};
   }
-  return onValue(typingRef(convId, otherUid), (snap) => {
-    onChange(snap.val() === true);
-  }, (err) => {
-    console.error('HUM: typing listener failed', err);
-    onChange(false);
-  });
+  return onValue(
+    typingRef(convId, otherUid),
+    (snap) => {
+      onChange(snap.val() === true);
+    },
+    (err) => {
+      console.error("HUM: typing listener failed", err);
+      onChange(false);
+    },
+  );
 }
 
 // Debounce timer that auto-clears the signed-in user's own typing flag
@@ -843,12 +881,15 @@ const TYPING_INACTIVITY_MS = 1500;
 // per "without redesigning the UI"; a subtle style hook
 // (.chat-header__handle--typing) exists purely for a color/italic
 // treatment, no layout change.
-function applyTypingIndicatorUI(isTyping){
-  if(!els.chatHeaderHandle || !state.activeChatUser) return;
-  els.chatHeaderHandle.classList.toggle('chat-header__handle--typing', isTyping);
+function applyTypingIndicatorUI(isTyping) {
+  if (!els.chatHeaderHandle || !state.activeChatUser) return;
+  els.chatHeaderHandle.classList.toggle(
+    "chat-header__handle--typing",
+    isTyping,
+  );
   els.chatHeaderHandle.textContent = isTyping
-    ? t('chat.typingIndicator')
-    : '@' + state.activeChatUser.username;
+    ? t("chat.typingIndicator")
+    : "@" + state.activeChatUser.username;
 }
 
 // Starts watching `otherUid`'s typing state for `convId` — called from
@@ -856,7 +897,7 @@ function applyTypingIndicatorUI(isTyping){
 // down whatever watcher was previously running first (see
 // stopTypingWatcher), so switching chats can never leave two watchers
 // (old + new) live at once.
-function startTypingWatcher(convId, otherUid){
+function startTypingWatcher(convId, otherUid) {
   stopTypingWatcher();
   typingWatchUnsub = watchTyping(convId, otherUid, applyTypingIndicatorUI);
 }
@@ -865,8 +906,8 @@ function startTypingWatcher(convId, otherUid){
 // touch the signed-in user's OWN typing flag — that's stopMyTyping()).
 // Also resets the header back to normal so a stale "typing…" can never
 // linger once nobody is watching anything to correct it.
-function stopTypingWatcher(){
-  if(typingWatchUnsub){
+function stopTypingWatcher() {
+  if (typingWatchUnsub) {
     typingWatchUnsub();
     typingWatchUnsub = null;
   }
@@ -880,16 +921,16 @@ function stopTypingWatcher(){
 // to actually land before something else happens (logging out, which
 // invalidates the write's permission once signOut() completes) can
 // await it; every other call site just fires it and moves on.
-function stopMyTyping(){
-  if(typingHideTimer){
+function stopMyTyping() {
+  if (typingHideTimer) {
     clearTimeout(typingHideTimer);
     typingHideTimer = null;
   }
-  if(!typingConvId) return Promise.resolve();
+  if (!typingConvId) return Promise.resolve();
   const convId = typingConvId;
   typingConvId = null;
   const me = currentUser();
-  if(!me) return Promise.resolve();
+  if (!me) return Promise.resolve();
   return setTypingState(convId, me.uid, false);
 }
 
@@ -899,18 +940,18 @@ function stopMyTyping(){
 // the section comment above: typing something sets the flag true and
 // (re)arms a short inactivity timeout that clears it; clearing the box
 // entirely clears the flag immediately, no timeout needed.
-function handleComposerTypingInput(){
+function handleComposerTypingInput() {
   const me = currentUser();
-  if(!me || !state.activeChatUser || !els.chatInput) return;
+  if (!me || !state.activeChatUser || !els.chatInput) return;
   const convId = conversationId(me.uid, state.activeChatUser.uid);
   const hasText = els.chatInput.value.trim().length > 0;
 
-  if(typingHideTimer){
+  if (typingHideTimer) {
     clearTimeout(typingHideTimer);
     typingHideTimer = null;
   }
 
-  if(hasText){
+  if (hasText) {
     typingConvId = convId;
     setTypingState(convId, me.uid, true);
     typingHideTimer = setTimeout(() => {
@@ -956,45 +997,53 @@ function handleComposerTypingInput(){
 // support; Safari (desktop 14.1+/iOS 14.3+) supports MediaRecorder but
 // not webm at all, hence the mp4/ogg fallbacks.
 const VOICE_MIME_CANDIDATES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/mp4',
-  'audio/ogg;codecs=opus',
-  'audio/ogg',
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4",
+  "audio/ogg;codecs=opus",
+  "audio/ogg",
 ];
-function pickVoiceMimeType(){
-  if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
-  return VOICE_MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) || '';
+function pickVoiceMimeType() {
+  if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported)
+    return "";
+  return (
+    VOICE_MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) ||
+    ""
+  );
 }
 
-function isVoiceRecordingSupported(){
-  return typeof MediaRecorder !== 'undefined'
-    && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+function isVoiceRecordingSupported() {
+  return (
+    typeof MediaRecorder !== "undefined" &&
+    !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+  );
 }
 
 // --- Recording state (module-level, mirroring the typing section's
 // pattern above rather than living on the shared `state` object — this
 // is transient device/tab-local recording state, not app data). ---
-let voiceRecorder = null;              // active MediaRecorder, or null when not recording
-let voiceRecorderStream = null;        // the getUserMedia MediaStream backing it, so its tracks can be released
-let voiceChunks = [];                  // Blob chunks collected via 'dataavailable' for the CURRENT recording
-let voiceRecordStartedAt = 0;          // Date.now() when recording began — elapsed-time display only
-let voiceRecordTimerInterval = null;   // repaints the elapsed-time label; see the section comment above re: this NOT being the recording itself
+let voiceRecorder = null; // active MediaRecorder, or null when not recording
+let voiceRecorderStream = null; // the getUserMedia MediaStream backing it, so its tracks can be released
+let voiceChunks = []; // Blob chunks collected via 'dataavailable' for the CURRENT recording
+let voiceRecordStartedAt = 0; // Date.now() when recording began — elapsed-time display only
+let voiceRecordTimerInterval = null; // repaints the elapsed-time label; see the section comment above re: this NOT being the recording itself
 
-function isRecordingVoice(){
-  return !!(voiceRecorder && voiceRecorder.state === 'recording');
+function isRecordingVoice() {
+  return !!(voiceRecorder && voiceRecorder.state === "recording");
 }
 
-function formatVoiceDuration(totalSeconds){
+function formatVoiceDuration(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds || 0));
   const m = Math.floor(s / 60);
   const sec = s % 60;
-  return `${m}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function updateVoiceRecordElapsedUI(){
-  if(!els.chatVoiceRecordTime) return;
-  els.chatVoiceRecordTime.textContent = formatVoiceDuration((Date.now() - voiceRecordStartedAt) / 1000);
+function updateVoiceRecordElapsedUI() {
+  if (!els.chatVoiceRecordTime) return;
+  els.chatVoiceRecordTime.textContent = formatVoiceDuration(
+    (Date.now() - voiceRecordStartedAt) / 1000,
+  );
 }
 
 // Swaps the composer between its normal (text input + mic + send) and
@@ -1002,25 +1051,27 @@ function updateVoiceRecordElapsedUI(){
 // already exists in index.html; this only ever toggles the `hidden`
 // attribute HUM's global [hidden]{display:none!important;} rule (see
 // style.css) already relies on everywhere else — no new CSS mechanism.
-function setComposerRecordingMode(isRecording){
-  if(els.chatInput) els.chatInput.hidden = isRecording;
-  if(els.chatMicBtn) els.chatMicBtn.hidden = isRecording;
-  if(els.chatAttachBtn) els.chatAttachBtn.hidden = isRecording;
-  if(els.chatSendBtn) els.chatSendBtn.hidden = isRecording;
-  if(els.chatVoiceRecordingBar) els.chatVoiceRecordingBar.hidden = !isRecording;
-  if(!isRecording && els.chatVoiceRecordTime) els.chatVoiceRecordTime.textContent = '0:00';
+function setComposerRecordingMode(isRecording) {
+  if (els.chatInput) els.chatInput.hidden = isRecording;
+  if (els.chatMicBtn) els.chatMicBtn.hidden = isRecording;
+  if (els.chatAttachBtn) els.chatAttachBtn.hidden = isRecording;
+  if (els.chatSendBtn) els.chatSendBtn.hidden = isRecording;
+  if (els.chatVoiceRecordingBar)
+    els.chatVoiceRecordingBar.hidden = !isRecording;
+  if (!isRecording && els.chatVoiceRecordTime)
+    els.chatVoiceRecordTime.textContent = "0:00";
 }
 
 // Stops the elapsed-time repaint timer and releases the microphone
 // (stops every track on the active getUserMedia stream) — called on
 // stop, cancel, chat switch, block, and logout, so HUM never holds the
 // microphone open longer than an actual in-progress recording needs.
-function releaseVoiceMic(){
-  if(voiceRecordTimerInterval){
+function releaseVoiceMic() {
+  if (voiceRecordTimerInterval) {
     clearInterval(voiceRecordTimerInterval);
     voiceRecordTimerInterval = null;
   }
-  if(voiceRecorderStream){
+  if (voiceRecorderStream) {
     voiceRecorderStream.getTracks().forEach((tr) => tr.stop());
     voiceRecorderStream = null;
   }
@@ -1031,23 +1082,23 @@ function releaseVoiceMic(){
 // Requests the microphone and starts recording into the currently open
 // chat. Bound to the mic button (see the event wiring near
 // els.chatMicBtn further down).
-async function startVoiceRecording(){
+async function startVoiceRecording() {
   const me = currentUser();
-  if(!me || !state.activeChatUser) return;
-  if(state.myBlockedUids.has(state.activeChatUser.uid)) return; // composer/mic are already disabled in this case; this is just a second guard
-  if(isRecordingVoice()) return; // already recording — a second press of the mic button is a no-op, not a second recording
+  if (!me || !state.activeChatUser) return;
+  if (state.myBlockedUids.has(state.activeChatUser.uid)) return; // composer/mic are already disabled in this case; this is just a second guard
+  if (isRecordingVoice()) return; // already recording — a second press of the mic button is a no-op, not a second recording
 
-  if(!isVoiceRecordingSupported()){
-    showToast(t('chat.voice.unsupported'), 'error');
+  if (!isVoiceRecordingSupported()) {
+    showToast(t("chat.voice.unsupported"), "error");
     return;
   }
 
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch(e){
-    console.error('HUM: microphone access failed', e);
-    showToast(t('chat.voice.micDenied'), 'error');
+  } catch (e) {
+    console.error("HUM: microphone access failed", e);
+    showToast(t("chat.voice.micDenied"), "error");
     return;
   }
 
@@ -1061,20 +1112,22 @@ async function startVoiceRecording(){
   voiceRecorderStream = stream;
   voiceChunks = [];
   try {
-    voiceRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-  } catch(e){
-    console.error('HUM: MediaRecorder could not start', e);
-    showToast(t('chat.voice.unsupported'), 'error');
+    voiceRecorder = mimeType
+      ? new MediaRecorder(stream, { mimeType })
+      : new MediaRecorder(stream);
+  } catch (e) {
+    console.error("HUM: MediaRecorder could not start", e);
+    showToast(t("chat.voice.unsupported"), "error");
     releaseVoiceMic();
     return;
   }
 
-  voiceRecorder.addEventListener('dataavailable', (e) => {
-    if(e.data && e.data.size > 0) voiceChunks.push(e.data);
+  voiceRecorder.addEventListener("dataavailable", (e) => {
+    if (e.data && e.data.size > 0) voiceChunks.push(e.data);
   });
-  voiceRecorder.addEventListener('error', (e) => {
-    console.error('HUM: recording error', (e && e.error) || e);
-    showToast(t('chat.voice.recordFailed'), 'error');
+  voiceRecorder.addEventListener("error", (e) => {
+    console.error("HUM: recording error", (e && e.error) || e);
+    showToast(t("chat.voice.recordFailed"), "error");
     cancelVoiceRecording();
   });
 
@@ -1091,26 +1144,33 @@ async function startVoiceRecording(){
 // milliseconds of start, before any 'dataavailable' event fired).
 // Always releases the microphone and resets the composer UI before
 // resolving, success or not.
-function stopVoiceRecordingAndCollect(){
+function stopVoiceRecordingAndCollect() {
   return new Promise((resolve) => {
-    if(!voiceRecorder || voiceRecorder.state !== 'recording'){
+    if (!voiceRecorder || voiceRecorder.state !== "recording") {
       resolve(null);
       return;
     }
-    const mimeType = voiceRecorder.mimeType || 'audio/webm';
+    const mimeType = voiceRecorder.mimeType || "audio/webm";
     const startedAt = voiceRecordStartedAt;
-    voiceRecorder.addEventListener('stop', () => {
-      const chunks = voiceChunks;
-      releaseVoiceMic();
-      setComposerRecordingMode(false);
-      if(!chunks.length){
-        resolve(null);
-        return;
-      }
-      const blob = new Blob(chunks, { type: mimeType });
-      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      resolve({ blob, mimeType, durationSeconds });
-    }, { once: true });
+    voiceRecorder.addEventListener(
+      "stop",
+      () => {
+        const chunks = voiceChunks;
+        releaseVoiceMic();
+        setComposerRecordingMode(false);
+        if (!chunks.length) {
+          resolve(null);
+          return;
+        }
+        const blob = new Blob(chunks, { type: mimeType });
+        const durationSeconds = Math.max(
+          1,
+          Math.round((Date.now() - startedAt) / 1000),
+        );
+        resolve({ blob, mimeType, durationSeconds });
+      },
+      { once: true },
+    );
     voiceRecorder.stop();
   });
 }
@@ -1119,13 +1179,17 @@ function stopVoiceRecordingAndCollect(){
 // bound to the composer's Cancel button, and used by every place a
 // recording needs to be silently abandoned instead of sent: switching
 // chats, the chat becoming blocked, and logging out.
-function cancelVoiceRecording(){
-  if(voiceRecorder && voiceRecorder.state === 'recording'){
+function cancelVoiceRecording() {
+  if (voiceRecorder && voiceRecorder.state === "recording") {
     // No 'stop' listener attached here on purpose — releaseVoiceMic()
     // below discards voiceChunks unconditionally, so nothing depends on
     // 'stop' actually firing; MediaRecorder.stop() is safe to call
     // without one.
-    try { voiceRecorder.stop(); } catch(e){ /* already inactive/stopped */ }
+    try {
+      voiceRecorder.stop();
+    } catch (e) {
+      /* already inactive/stopped */
+    }
   }
   releaseVoiceMic();
   setComposerRecordingMode(false);
@@ -1136,11 +1200,16 @@ function cancelVoiceRecording(){
 // from the actual recorded MIME type (see pickVoiceMimeType) rather
 // than hardcoded, since which one MediaRecorder actually used varies
 // by browser.
-function uniqueVoiceFileName(mimeType){
-  const ext = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
-  const rand = (window.crypto && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+function uniqueVoiceFileName(mimeType) {
+  const ext = mimeType.includes("mp4")
+    ? "m4a"
+    : mimeType.includes("ogg")
+      ? "ogg"
+      : "webm";
+  const rand =
+    window.crypto && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `${rand}.${ext}`;
 }
 
@@ -1151,16 +1220,18 @@ function uniqueVoiceFileName(mimeType){
 // every recording already gets a fresh random filename, so a collision
 // should never legitimately happen, and if it somehow did, failing
 // loudly is safer than silently overwriting someone's audio.
-async function uploadVoiceBlob(convId, uid, blob, mimeType){
-  if(!supabase) throw new Error('Supabase is not configured');
+async function uploadVoiceBlob(convId, uid, blob, mimeType) {
+  if (!supabase) throw new Error("Supabase is not configured");
   const ok = await ensureSupabaseAuth();
-  if(!ok) throw new Error('Supabase authentication failed');
+  if (!ok) throw new Error("Supabase authentication failed");
   const path = `${convId}/${uid}/${uniqueVoiceFileName(mimeType)}`;
-  const { error } = await supabase.storage.from(VOICE_BUCKET).upload(path, blob, {
-    contentType: mimeType,
-    upsert: false,
-  });
-  if(error) throw error;
+  const { error } = await supabase.storage
+    .from(VOICE_BUCKET)
+    .upload(path, blob, {
+      contentType: mimeType,
+      upsert: false,
+    });
+  if (error) throw error;
   return path;
 }
 
@@ -1169,12 +1240,12 @@ async function uploadVoiceBlob(convId, uid, blob, mimeType){
 // then failed. Never allowed to throw: this already runs inside a
 // catch block for a worse problem (see sendVoiceMessage), and a
 // cleanup failure here must never mask or replace that original error.
-async function deleteVoiceBlobSafely(path){
-  if(!supabase || !path) return;
+async function deleteVoiceBlobSafely(path) {
+  if (!supabase || !path) return;
   try {
     await supabase.storage.from(VOICE_BUCKET).remove([path]);
-  } catch(e){
-    console.error('HUM: failed to clean up orphaned voice file', path, e);
+  } catch (e) {
+    console.error("HUM: failed to clean up orphaned voice file", path, e);
   }
 }
 
@@ -1183,12 +1254,12 @@ async function deleteVoiceBlobSafely(path){
 // audio instead of text. Bound to the composer's Stop button (stopping
 // the recording IS "send" here, matching the recording-bar UI: Cancel
 // discards, Stop sends).
-async function sendVoiceMessage(){
+async function sendVoiceMessage() {
   const me = currentUser();
-  if(!me || !state.activeChatUser) return;
+  if (!me || !state.activeChatUser) return;
   const other = state.activeChatUser;
 
-  if(state.myBlockedUids.has(other.uid)){
+  if (state.myBlockedUids.has(other.uid)) {
     // The composer/mic are already disabled while blocked, but this
     // covers the small window between pressing Stop and this function
     // actually running if a block landed in that instant — "do not
@@ -1198,34 +1269,39 @@ async function sendVoiceMessage(){
   }
 
   const recording = await stopVoiceRecordingAndCollect();
-  if(!recording){
-    showToast(t('chat.voice.emptyRecording'), 'error');
+  if (!recording) {
+    showToast(t("chat.voice.emptyRecording"), "error");
     return;
   }
 
   const convId = conversationId(me.uid, other.uid);
-  showToast(t('chat.voice.uploading'));
+  showToast(t("chat.voice.uploading"));
 
   let path;
   try {
-    path = await uploadVoiceBlob(convId, me.uid, recording.blob, recording.mimeType);
-  } catch(e){
-    console.error('HUM: voice upload failed', e);
-    showToast(t('chat.voice.uploadFailed'), 'error');
+    path = await uploadVoiceBlob(
+      convId,
+      me.uid,
+      recording.blob,
+      recording.mimeType,
+    );
+  } catch (e) {
+    console.error("HUM: voice upload failed", e);
+    showToast(t("chat.voice.uploadFailed"), "error");
     return; // nothing uploaded successfully → no Firestore message, per spec
   }
 
   try {
-    await addMessage(me, other, '', {
-      type: 'voice',
+    await addMessage(me, other, "", {
+      type: "voice",
       voicePath: path,
       voiceMimeType: recording.mimeType,
       voiceDuration: recording.durationSeconds,
     });
-    showToast(t('chat.voice.sent'), 'success');
-  } catch(e){
-    console.error('HUM: failed to create voice message after upload', e);
-    showToast(t('errors.sendFailed'), 'error');
+    showToast(t("chat.voice.sent"), "success");
+  } catch (e) {
+    console.error("HUM: failed to create voice message after upload", e);
+    showToast(t("errors.sendFailed"), "error");
     // Upload succeeded but the message never got created — clean up the
     // now-orphaned file rather than leaving it in Storage forever.
     await deleteVoiceBlobSafely(path);
@@ -1246,43 +1322,59 @@ let activeVoiceMessageId = null; // Firestore message id currently loaded in sha
 // play/pause/timeupdate/ended from the audio element, AND once at the
 // end of renderChatMessages() so a list re-render (e.g. a read receipt
 // ticking in) can't visually reset a bubble that's actually mid-playback.
-function syncVoicePlayersUI(){
-  if(!els.chatMessages) return;
-  els.chatMessages.querySelectorAll('.chat-msg__bubble--voice').forEach((bubble) => {
-    const msgId = bubble.getAttribute('data-voice-id');
-    const isActive = !!msgId && msgId === activeVoiceMessageId;
-    const isPlaying = isActive && !sharedVoiceAudio.paused;
-    const playBtn = bubble.querySelector('[data-voice-play]');
-    const fill = bubble.querySelector('.chat-voice-progress__fill');
-    const timeEl = bubble.querySelector('.chat-voice-time');
-    const baseDuration = Number(bubble.getAttribute('data-voice-duration')) || 0;
+function syncVoicePlayersUI() {
+  if (!els.chatMessages) return;
+  els.chatMessages
+    .querySelectorAll(".chat-msg__bubble--voice")
+    .forEach((bubble) => {
+      const msgId = bubble.getAttribute("data-voice-id");
+      const isActive = !!msgId && msgId === activeVoiceMessageId;
+      const isPlaying = isActive && !sharedVoiceAudio.paused;
+      const playBtn = bubble.querySelector("[data-voice-play]");
+      const fill = bubble.querySelector(".chat-voice-progress__fill");
+      const timeEl = bubble.querySelector(".chat-voice-time");
+      const baseDuration =
+        Number(bubble.getAttribute("data-voice-duration")) || 0;
 
-    if(playBtn){
-      playBtn.classList.toggle('is-playing', isPlaying);
-      playBtn.setAttribute('aria-label', t(isPlaying ? 'chat.voice.pause' : 'chat.voice.play'));
-    }
+      if (playBtn) {
+        playBtn.classList.toggle("is-playing", isPlaying);
+        playBtn.setAttribute(
+          "aria-label",
+          t(isPlaying ? "chat.voice.pause" : "chat.voice.play"),
+        );
+      }
 
-    let pct = 0;
-    let displaySeconds = baseDuration;
-    if(isActive && sharedVoiceAudio.duration && isFinite(sharedVoiceAudio.duration)){
-      pct = Math.min(100, (sharedVoiceAudio.currentTime / sharedVoiceAudio.duration) * 100);
-      displaySeconds = sharedVoiceAudio.currentTime > 0 || isPlaying ? sharedVoiceAudio.currentTime : sharedVoiceAudio.duration;
-    }
-    if(fill) fill.style.width = pct + '%';
-    if(timeEl) timeEl.textContent = formatVoiceDuration(displaySeconds);
-  });
+      let pct = 0;
+      let displaySeconds = baseDuration;
+      if (
+        isActive &&
+        sharedVoiceAudio.duration &&
+        isFinite(sharedVoiceAudio.duration)
+      ) {
+        pct = Math.min(
+          100,
+          (sharedVoiceAudio.currentTime / sharedVoiceAudio.duration) * 100,
+        );
+        displaySeconds =
+          sharedVoiceAudio.currentTime > 0 || isPlaying
+            ? sharedVoiceAudio.currentTime
+            : sharedVoiceAudio.duration;
+      }
+      if (fill) fill.style.width = pct + "%";
+      if (timeEl) timeEl.textContent = formatVoiceDuration(displaySeconds);
+    });
 }
-sharedVoiceAudio.addEventListener('play', syncVoicePlayersUI);
-sharedVoiceAudio.addEventListener('pause', syncVoicePlayersUI);
-sharedVoiceAudio.addEventListener('timeupdate', syncVoicePlayersUI);
-sharedVoiceAudio.addEventListener('ended', () => {
+sharedVoiceAudio.addEventListener("play", syncVoicePlayersUI);
+sharedVoiceAudio.addEventListener("pause", syncVoicePlayersUI);
+sharedVoiceAudio.addEventListener("timeupdate", syncVoicePlayersUI);
+sharedVoiceAudio.addEventListener("ended", () => {
   activeVoiceMessageId = null;
   syncVoicePlayersUI();
 });
-sharedVoiceAudio.addEventListener('error', () => {
-  if(activeVoiceMessageId){
-    console.error('HUM: voice audio element error', sharedVoiceAudio.error);
-    showToast(t('chat.voice.playbackError'), 'error');
+sharedVoiceAudio.addEventListener("error", () => {
+  if (activeVoiceMessageId) {
+    console.error("HUM: voice audio element error", sharedVoiceAudio.error);
+    showToast(t("chat.voice.playbackError"), "error");
     activeVoiceMessageId = null;
     syncVoicePlayersUI();
   }
@@ -1292,11 +1384,15 @@ sharedVoiceAudio.addEventListener('error', () => {
 // leaving/switching chats (see openChat/leaveActiveChat) and on
 // logout, so audio from a conversation that's no longer open never
 // keeps playing in the background.
-function stopVoicePlayback(){
-  if(activeVoiceMessageId !== null || !sharedVoiceAudio.paused){
+function stopVoicePlayback() {
+  if (activeVoiceMessageId !== null || !sharedVoiceAudio.paused) {
     sharedVoiceAudio.pause();
-    sharedVoiceAudio.removeAttribute('src');
-    try { sharedVoiceAudio.load(); } catch(e){ /* no-op */ }
+    sharedVoiceAudio.removeAttribute("src");
+    try {
+      sharedVoiceAudio.load();
+    } catch (e) {
+      /* no-op */
+    }
   }
   activeVoiceMessageId = null;
 }
@@ -1309,19 +1405,19 @@ function stopVoicePlayback(){
 // here always pauses whatever was playing before it — "only one voice
 // message should normally play at a time" holds by construction, not
 // by extra bookkeeping.
-async function toggleVoicePlayback(messageId, voicePath){
-  if(!supabase){
-    showToast(t('chat.voice.playbackError'), 'error');
+async function toggleVoicePlayback(messageId, voicePath) {
+  if (!supabase) {
+    showToast(t("chat.voice.playbackError"), "error");
     return;
   }
-  if(activeVoiceMessageId === messageId && !sharedVoiceAudio.paused){
+  if (activeVoiceMessageId === messageId && !sharedVoiceAudio.paused) {
     sharedVoiceAudio.pause();
     return;
   }
-  if(activeVoiceMessageId === messageId && sharedVoiceAudio.src){
+  if (activeVoiceMessageId === messageId && sharedVoiceAudio.src) {
     sharedVoiceAudio.play().catch((e) => {
-      console.error('HUM: voice playback failed', e);
-      showToast(t('chat.voice.playbackError'), 'error');
+      console.error("HUM: voice playback failed", e);
+      showToast(t("chat.voice.playbackError"), "error");
     });
     return;
   }
@@ -1332,16 +1428,19 @@ async function toggleVoicePlayback(messageId, voicePath){
 
   try {
     const ok = await ensureSupabaseAuth();
-    if(!ok) throw new Error('Supabase authentication failed');
-    const { data, error } = await supabase.storage.from(VOICE_BUCKET).createSignedUrl(voicePath, 3600);
-    if(error || !data || !data.signedUrl) throw error || new Error('Supabase did not return a signed URL');
-    if(activeVoiceMessageId !== messageId) return; // the person tapped a different message while this was loading
+    if (!ok) throw new Error("Supabase authentication failed");
+    const { data, error } = await supabase.storage
+      .from(VOICE_BUCKET)
+      .createSignedUrl(voicePath, 3600);
+    if (error || !data || !data.signedUrl)
+      throw error || new Error("Supabase did not return a signed URL");
+    if (activeVoiceMessageId !== messageId) return; // the person tapped a different message while this was loading
     sharedVoiceAudio.src = data.signedUrl;
     await sharedVoiceAudio.play();
-  } catch(e){
-    console.error('HUM: voice playback failed', e);
-    showToast(t('chat.voice.playbackError'), 'error');
-    if(activeVoiceMessageId === messageId) activeVoiceMessageId = null;
+  } catch (e) {
+    console.error("HUM: voice playback failed", e);
+    showToast(t("chat.voice.playbackError"), "error");
+    if (activeVoiceMessageId === messageId) activeVoiceMessageId = null;
     syncVoicePlayersUI();
   }
 }
@@ -1373,22 +1472,22 @@ async function toggleVoicePlayback(messageId, voicePath){
 // browser, and the real safety net here is CHAT_FILE_MAX_BYTES plus
 // the fact Supabase only ever stores bytes, never executes anything.
 const CHAT_FILE_ACCEPTED_MIME_TYPES = [
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'text/plain',
-  'text/csv',
-  'application/zip',
-  'application/x-zip-compressed',
-  'application/json',
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+  "text/csv",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/json",
 ];
-function isAcceptedChatFileType(file){
-  if(!file || !file.type) return true;
-  if(file.type.startsWith('image/')) return true;
+function isAcceptedChatFileType(file) {
+  if (!file || !file.type) return true;
+  if (file.type.startsWith("image/")) return true;
   return CHAT_FILE_ACCEPTED_MIME_TYPES.includes(file.type);
 }
 
@@ -1397,12 +1496,19 @@ function isAcceptedChatFileType(file){
 // different bucket and the extension comes from the ORIGINAL filename
 // (falling back to a generic one if the file somehow has none) rather
 // than a MediaRecorder MIME type.
-function uniqueChatFileName(originalName){
-  const dot = (originalName || '').lastIndexOf('.');
-  const ext = dot > 0 && dot < originalName.length - 1 ? originalName.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-  const rand = (window.crypto && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+function uniqueChatFileName(originalName) {
+  const dot = (originalName || "").lastIndexOf(".");
+  const ext =
+    dot > 0 && dot < originalName.length - 1
+      ? originalName
+          .slice(dot + 1)
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "")
+      : "";
+  const rand =
+    window.crypto && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return ext ? `${rand}.${ext}` : rand;
 }
 
@@ -1410,16 +1516,18 @@ function uniqueChatFileName(originalName){
 // returns the storage path on success, or throws on failure — same
 // upsert:false reasoning as uploadVoiceBlob (every upload gets a fresh
 // random filename, so a collision should never legitimately happen).
-async function uploadChatFileBlob(convId, uid, file){
-  if(!supabase) throw new Error('Supabase is not configured');
+async function uploadChatFileBlob(convId, uid, file) {
+  if (!supabase) throw new Error("Supabase is not configured");
   const ok = await ensureSupabaseAuth();
-  if(!ok) throw new Error('Supabase authentication failed');
+  if (!ok) throw new Error("Supabase authentication failed");
   const path = `${convId}/${uid}/${uniqueChatFileName(file.name)}`;
-  const { error } = await supabase.storage.from(CHAT_FILES_BUCKET).upload(path, file, {
-    contentType: file.type || 'application/octet-stream',
-    upsert: false,
-  });
-  if(error) throw error;
+  const { error } = await supabase.storage
+    .from(CHAT_FILES_BUCKET)
+    .upload(path, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+  if (error) throw error;
   return path;
 }
 
@@ -1428,12 +1536,12 @@ async function uploadChatFileBlob(convId, uid, file){
 // Firestore write fails right after a successful upload, and when
 // "delete for everyone" tombstones an image/file message — see
 // deleteMessageForEveryone above).
-async function deleteChatFileBlobSafely(path){
-  if(!supabase || !path) return;
+async function deleteChatFileBlobSafely(path) {
+  if (!supabase || !path) return;
   try {
     await supabase.storage.from(CHAT_FILES_BUCKET).remove([path]);
-  } catch(e){
-    console.error('HUM: failed to clean up orphaned chat file', path, e);
+  } catch (e) {
+    console.error("HUM: failed to clean up orphaned chat file", path, e);
   }
 }
 
@@ -1442,12 +1550,15 @@ async function deleteChatFileBlobSafely(path){
 // notes alongside CHAT_FILES_BUCKET above); this is the "correct
 // client-side access mechanism" the private-bucket requirement calls
 // for, identical in shape to voice playback's createSignedUrl usage.
-async function getChatFileSignedUrl(path){
-  if(!supabase) throw new Error('Supabase is not configured');
+async function getChatFileSignedUrl(path) {
+  if (!supabase) throw new Error("Supabase is not configured");
   const ok = await ensureSupabaseAuth();
-  if(!ok) throw new Error('Supabase authentication failed');
-  const { data, error } = await supabase.storage.from(CHAT_FILES_BUCKET).createSignedUrl(path, 3600);
-  if(error || !data || !data.signedUrl) throw error || new Error('Supabase did not return a signed URL');
+  if (!ok) throw new Error("Supabase authentication failed");
+  const { data, error } = await supabase.storage
+    .from(CHAT_FILES_BUCKET)
+    .createSignedUrl(path, 3600);
+  if (error || !data || !data.signedUrl)
+    throw error || new Error("Supabase did not return a signed URL");
   return data.signedUrl;
 }
 
@@ -1455,13 +1566,13 @@ async function getChatFileSignedUrl(path){
 // toast for whichever check fails — called once per file before any
 // upload is attempted (see sendAttachmentFiles below), so a bad file
 // never even reaches the network.
-function validateAttachmentFile(file){
-  if(file.size > CHAT_FILE_MAX_BYTES){
-    showToast(t('chat.attach.tooLarge', { name: file.name }), 'error');
+function validateAttachmentFile(file) {
+  if (file.size > CHAT_FILE_MAX_BYTES) {
+    showToast(t("chat.attach.tooLarge", { name: file.name }), "error");
     return false;
   }
-  if(!isAcceptedChatFileType(file)){
-    showToast(t('chat.attach.unsupportedType', { name: file.name }), 'error');
+  if (!isAcceptedChatFileType(file)) {
+    showToast(t("chat.attach.unsupportedType", { name: file.name }), "error");
     return false;
   }
   return true;
@@ -1471,31 +1582,31 @@ function validateAttachmentFile(file){
 // upload → Firestore message, mirroring sendVoiceMessage()'s shape and
 // error-toast posture exactly. Used by sendAttachmentFiles() below, one
 // call per selected file, independently of the others.
-async function sendOneAttachment(me, other, convId, file){
-  const isImage = file.type && file.type.startsWith('image/');
-  showToast(t('chat.attach.uploading', { name: file.name }));
+async function sendOneAttachment(me, other, convId, file) {
+  const isImage = file.type && file.type.startsWith("image/");
+  showToast(t("chat.attach.uploading", { name: file.name }));
 
   let path;
   try {
     path = await uploadChatFileBlob(convId, me.uid, file);
-  } catch(e){
-    console.error('HUM: attachment upload failed', file.name, e);
-    showToast(t('chat.attach.uploadFailed', { name: file.name }), 'error');
+  } catch (e) {
+    console.error("HUM: attachment upload failed", file.name, e);
+    showToast(t("chat.attach.uploadFailed", { name: file.name }), "error");
     return; // nothing uploaded successfully → no Firestore message, per spec
   }
 
   try {
-    await addMessage(me, other, '', {
-      type: isImage ? 'image' : 'file',
+    await addMessage(me, other, "", {
+      type: isImage ? "image" : "file",
       filePath: path,
       fileName: file.name,
-      fileMimeType: file.type || 'application/octet-stream',
+      fileMimeType: file.type || "application/octet-stream",
       fileSize: file.size,
     });
-    showToast(t('chat.attach.sent', { name: file.name }), 'success');
-  } catch(e){
-    console.error('HUM: failed to create attachment message after upload', file.name, e);
-    showToast(t('errors.sendFailed'), 'error');
+    showToast(t("chat.attach.sent", { name: file.name }), "success");
+  } catch (e) {
+    console.error("HUM: failed to create attachment message after upload", file.name, e);
+    showToast(t("errors.sendFailed"), "error");
     // Upload succeeded but the message never got created — clean up the
     // now-orphaned file rather than leaving it in Storage forever.
     await deleteChatFileBlobSafely(path);
@@ -1512,18 +1623,18 @@ async function sendOneAttachment(me, other, convId, file){
 // that per-file, there's nothing additional to coordinate across the
 // batch). An empty FileList (the person opened the picker and
 // cancelled it) is a silent no-op — "graceful cancellation".
-async function sendAttachmentFiles(fileList){
+async function sendAttachmentFiles(fileList) {
   const me = currentUser();
-  if(!me || !state.activeChatUser) return;
+  if (!me || !state.activeChatUser) return;
   const other = state.activeChatUser;
-  if(state.myBlockedUids.has(other.uid)) return; // attach button is already disabled in this case; extra guard
+  if (state.myBlockedUids.has(other.uid)) return;
 
   const files = Array.from(fileList || []);
-  if(!files.length) return;
+  if (!files.length) return;
 
   const convId = conversationId(me.uid, other.uid);
-  for(const file of files){
-    if(!validateAttachmentFile(file)) continue;
+  for (const file of files) {
+    if (!validateAttachmentFile(file)) continue;
     await sendOneAttachment(me, other, convId, file);
   }
 }
@@ -1536,31 +1647,31 @@ async function sendAttachmentFiles(fileList){
    localStorage is no longer the source of truth for either.
 =================================================================== */
 const KEYS = {
-  LANG:'hum_lang',
-  THEME:'hum_theme'
+  LANG: "hum_lang",
+  THEME: "hum_theme",
 };
 
-function getItem(key, fallback = null){
-  try{
+function getItem(key, fallback = null) {
+  try {
     const raw = localStorage.getItem(key);
-    if(raw == null) return fallback;
+    if (raw == null) return fallback;
     return JSON.parse(raw);
-  }catch(e){
+  } catch (e) {
     return fallback;
   }
 }
 
-function setItem(key, value){
-  try{
+function setItem(key, value) {
+  try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
-  }catch(e){
-    console.error('HUM storage error:', e);
+  } catch (e) {
+    console.error("HUM storage error:", e);
     return false;
   }
 }
 
-function hasStoredLang(){
+function hasStoredLang() {
   return localStorage.getItem(KEYS.LANG) !== null;
 }
 
@@ -1579,8 +1690,10 @@ function hasStoredLang(){
    profile never has to guess your current username at all.
 =================================================================== */
 
-function usernameDocId(username){
-  return String(username || '').trim().toLowerCase();
+function usernameDocId(username) {
+  return String(username || "")
+    .trim()
+    .toLowerCase();
 }
 
 // Loads a profile directly by its document ID (the Auth UID) — this is
@@ -1588,10 +1701,10 @@ function usernameDocId(username){
 // and the onAuthStateChanged handler at the bottom of this file), since
 // their UID is already known the moment Firebase confirms they're
 // signed in, with no need to go via username at all.
-async function findUserByUid(uid){
-  if(!uid) return null;
+async function findUserByUid(uid) {
+  if (!uid) return null;
   requireFirebaseConfig();
-  const snap = await getDoc(doc(db, 'users', uid));
+  const snap = await getDoc(doc(db, "users", uid));
   return snap.exists() ? snap.data() : null;
 }
 
@@ -1600,11 +1713,17 @@ async function findUserByUid(uid){
 // document ID is the UID (not the username), this runs as an indexed
 // equality query on the usernameLower field rather than a direct
 // document read; still a single, cheap, auto-indexed lookup.
-async function findUserByUsername(username){
-  if(!username) return null;
+async function findUserByUsername(username) {
+  if (!username) return null;
   requireFirebaseConfig();
   const lower = usernameDocId(username);
-  const snap = await getDocs(fbQuery(collection(db, 'users'), where('usernameLower', '==', lower), limit(1)));
+  const snap = await getDocs(
+    fbQuery(
+      collection(db, "users"),
+      where("usernameLower", "==", lower),
+      limit(1),
+    ),
+  );
   return snap.empty ? null : snap.docs[0].data();
 }
 
@@ -1624,20 +1743,20 @@ async function findUserByUsername(username){
 //      profile is reconstructed from what the Auth account itself
 //      knows (its username-shaped email) and saved as the real profile
 //      going forward.
-async function loadOrRecoverProfile(firebaseUser){
+async function loadOrRecoverProfile(firebaseUser) {
   requireFirebaseConfig();
 
   const byUid = await findUserByUid(firebaseUser.uid);
-  if(byUid) return byUid;
+  if (byUid) return byUid;
 
-  const usernameLower = firebaseUser.email.split('@')[0];
+  const usernameLower = firebaseUser.email.split("@")[0];
 
-  const legacyRef = doc(db, 'users', usernameLower);
+  const legacyRef = doc(db, "users", usernameLower);
   const legacySnap = await getDoc(legacyRef);
-  if(legacySnap.exists()){
+  if (legacySnap.exists()) {
     const migrated = { ...legacySnap.data(), uid: firebaseUser.uid };
-    await setDoc(doc(db, 'users', firebaseUser.uid), migrated);
-    if(usernameLower !== firebaseUser.uid){
+    await setDoc(doc(db, "users", firebaseUser.uid), migrated);
+    if (usernameLower !== firebaseUser.uid) {
       await deleteDoc(legacyRef).catch(() => {});
     }
     return migrated;
@@ -1649,11 +1768,11 @@ async function loadOrRecoverProfile(firebaseUser){
     usernameLower,
     displayName: usernameLower,
     displayNameLower: usernameLower,
-    bio: '',
-    avatar: { type: 'generated' },
+    bio: "",
+    avatar: { type: "generated" },
     createdAt: new Date().toISOString(),
   };
-  await setDoc(doc(db, 'users', firebaseUser.uid), recovered);
+  await setDoc(doc(db, "users", firebaseUser.uid), recovered);
   return recovered;
 }
 
@@ -1663,7 +1782,7 @@ async function loadOrRecoverProfile(firebaseUser){
 // read it synchronously instead of re-awaiting Firestore on every
 // render. Firestore is still the source of truth — this is a cache of
 // it, refreshed whenever it changes.
-function currentUser(){
+function currentUser() {
   return state.me || null;
 }
 
@@ -1686,20 +1805,24 @@ function currentUser(){
    avatar — that's just display data for rendering the Chats list and
    chat header, not a security identity. */
 
-function conversationId(uidA, uidB){
-  return [uidA, uidB].sort().join('__');
+function conversationId(uidA, uidB) {
+  return [uidA, uidB].sort().join("__");
 }
 
-function conversationInfo(user){
-  return { username: user.username, displayName: user.displayName, avatar: user.avatar || { type:'generated' } };
+function conversationInfo(user) {
+  return {
+    username: user.username,
+    displayName: user.displayName,
+    avatar: user.avatar || { type: "generated" },
+  };
 }
 
-async function ensureConversation(meUser, otherUser){
+async function ensureConversation(meUser, otherUser) {
   requireFirebaseConfig();
   const convId = conversationId(meUser.uid, otherUser.uid);
-  const ref = doc(db, 'conversations', convId);
+  const ref = doc(db, "conversations", convId);
   const snap = await getDoc(ref);
-  if(!snap.exists()){
+  if (!snap.exists()) {
     await setDoc(ref, {
       participants: [meUser.uid, otherUser.uid],
       participantsInfo: {
@@ -1730,23 +1853,32 @@ async function ensureConversation(meUser, otherUser){
 // voiceMimeType, voiceDuration } without this function needing to know
 // anything about voice messages specifically; an ordinary text message
 // (the vast majority of calls) just omits it.
-async function addMessage(meUser, otherUser, text, extra){
+async function addMessage(meUser, otherUser, text, extra) {
   const convId = await ensureConversation(meUser, otherUser);
-  const message = { from: meUser.uid, text, ts: new Date().toISOString(), ...(extra || {}) };
-  await addDoc(collection(db, 'conversations', convId, 'messages'), message);
-  await setDoc(doc(db, 'conversations', convId), {
-    participantsInfo: {
-      [meUser.uid]: conversationInfo(meUser),
+  const message = {
+    from: meUser.uid,
+    text,
+    ts: new Date().toISOString(),
+    ...(extra || {}),
+  };
+  await addDoc(collection(db, "conversations", convId, "messages"), message);
+  await setDoc(
+    doc(db, "conversations", convId),
+    {
+      participantsInfo: {
+        [meUser.uid]: conversationInfo(meUser),
+      },
+      lastMessage: message,
+      updatedAt: message.ts,
+      // A real message is the clearest possible signal that this
+      // conversation is active again — clear BOTH sides' "removed from my
+      // chat list" flag (see the BLOCKING/REMOVE section below) so a
+      // fresh message always makes the thread reappear for sender and
+      // recipient alike, exactly like starting a new conversation should.
+      hiddenFor: arrayRemove(meUser.uid, otherUser.uid),
     },
-    lastMessage: message,
-    updatedAt: message.ts,
-    // A real message is the clearest possible signal that this
-    // conversation is active again — clear BOTH sides' "removed from my
-    // chat list" flag (see the BLOCKING/REMOVE section below) so a
-    // fresh message always makes the thread reappear for sender and
-    // recipient alike, exactly like starting a new conversation should.
-    hiddenFor: arrayRemove(meUser.uid, otherUser.uid),
-  }, { merge:true });
+    { merge: true },
+  );
   return message;
 }
 
@@ -1760,16 +1892,23 @@ async function addMessage(meUser, otherUser, text, extra){
 // the exact right doc; nothing about existing rendering breaks by its
 // presence, since renderChatMessages() only ever reads the fields it
 // already knew about.
-function watchConversationMessages(uidA, uidB, onChange){
+function watchConversationMessages(uidA, uidB, onChange) {
   requireFirebaseConfig();
   const convId = conversationId(uidA, uidB);
-  const q = fbQuery(collection(db, 'conversations', convId, 'messages'), orderBy('ts', 'asc'));
-  return onSnapshot(q, (snap) => {
-    onChange(snap.docs.map(d => ({ ...d.data(), id: d.id })));
-  }, (err) => {
-    console.error('HUM: message listener failed', err);
-    onChange(null, err);
-  });
+  const q = fbQuery(
+    collection(db, "conversations", convId, "messages"),
+    orderBy("ts", "asc"),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      onChange(snap.docs.map((d) => ({ ...d.data(), id: d.id })));
+    },
+    (err) => {
+      console.error("HUM: message listener failed", err);
+      onChange(null, err);
+    },
+  );
 }
 
 // Marks any of `messages` that were sent BY otherUid (i.e., incoming to
@@ -1788,19 +1927,23 @@ function watchConversationMessages(uidA, uidB, onChange){
 //   independently enforces "only the recipient may set readAt" — this
 //   function just avoids attempting writes that rule would reject
 //   anyway (e.g. it never tries to mark meUid's own messages read).
-async function markMessagesRead(meUid, otherUid, convId, messages){
+async function markMessagesRead(meUid, otherUid, convId, messages) {
   requireFirebaseConfig();
-  const unread = (messages || []).filter((m) => m.from === otherUid && !m.readAt && m.id);
-  if(!unread.length) return;
+  const unread = (messages || []).filter(
+    (m) => m.from === otherUid && !m.readAt && m.id,
+  );
+  if (!unread.length) return;
   const readAt = new Date().toISOString();
   const batch = writeBatch(db);
   unread.forEach((m) => {
-    batch.update(doc(db, 'conversations', convId, 'messages', m.id), { readAt });
+    batch.update(doc(db, "conversations", convId, "messages", m.id), {
+      readAt,
+    });
   });
   try {
     await batch.commit();
-  } catch(e){
-    console.error('HUM: failed to mark messages as read', e);
+  } catch (e) {
+    console.error("HUM: failed to mark messages as read", e);
   }
 }
 
@@ -1834,11 +1977,15 @@ async function markMessagesRead(meUid, otherUid, convId, messages){
 // "Delete for me" — hides one message from just the caller's own view.
 // Uses setDoc+merge (not a fresh `updateDoc` import) to match every
 // other single-field message/conversation write already in this file.
-async function deleteMessageForMe(convId, msgId, uid){
+async function deleteMessageForMe(convId, msgId, uid) {
   requireFirebaseConfig();
-  await setDoc(doc(db, 'conversations', convId, 'messages', msgId), {
-    deletedFor: arrayUnion(uid),
-  }, { merge:true });
+  await setDoc(
+    doc(db, "conversations", convId, "messages", msgId),
+    {
+      deletedFor: arrayUnion(uid),
+    },
+    { merge: true },
+  );
 }
 
 // "Delete for everyone" — tombstones the message for both participants.
@@ -1853,14 +2000,21 @@ async function deleteMessageForMe(convId, msgId, uid){
 // succeeded, and can never fail the deletion itself (see
 // deleteVoiceBlobSafely/deleteChatFileBlobSafely, both already
 // try/catch-wrapped to never throw).
-async function deleteMessageForEveryone(convId, message){
+async function deleteMessageForEveryone(convId, message) {
   requireFirebaseConfig();
-  await setDoc(doc(db, 'conversations', convId, 'messages', message.id), {
-    deletedForEveryone: true,
-  }, { merge:true });
-  if(message.type === 'voice' && message.voicePath){
+  await setDoc(
+    doc(db, "conversations", convId, "messages", message.id),
+    {
+      deletedForEveryone: true,
+    },
+    { merge: true },
+  );
+  if (message.type === "voice" && message.voicePath) {
     await deleteVoiceBlobSafely(message.voicePath);
-  } else if((message.type === 'image' || message.type === 'file') && message.filePath){
+  } else if (
+    (message.type === "image" || message.type === "file") &&
+    message.filePath
+  ) {
     await deleteChatFileBlobSafely(message.filePath);
   }
   // "Delete for me" never touches Storage at all — the shared file may
@@ -1877,33 +2031,44 @@ async function deleteMessageForEveryone(convId, message){
 // checks request.auth.uid against, so it has to be a UID here, not a
 // username, or the rule can never match what the query is actually
 // filtering on.
-function watchUserConversations(uid, onChange){
+function watchUserConversations(uid, onChange) {
   requireFirebaseConfig();
   const q = fbQuery(
-    collection(db, 'conversations'),
-    where('participants', 'array-contains', uid),
-    orderBy('updatedAt', 'desc'),
+    collection(db, "conversations"),
+    where("participants", "array-contains", uid),
+    orderBy("updatedAt", "desc"),
   );
-  return onSnapshot(q, (snap) => {
-    const rows = snap.docs
-      .map(d => d.data())
-      .filter(conv => conv.lastMessage)
-      // "Remove" (see removeConversationForMe) hides a conversation from
-      // just the person who removed it, by adding their own uid to
-      // hiddenFor — the other participant's copy of the same doc, and
-      // their own chat list, are completely untouched.
-      .filter(conv => !(Array.isArray(conv.hiddenFor) && conv.hiddenFor.includes(uid)))
-      .map(conv => {
-        const otherUid = conv.participants.find(p => p !== uid) || conv.participants[0];
-        const otherInfo = conv.participantsInfo && conv.participantsInfo[otherUid];
-        return otherInfo ? { other: otherInfo, otherUid, lastMessage: conv.lastMessage } : null;
-      })
-      .filter(Boolean);
-    onChange(rows);
-  }, (err) => {
-    console.error('HUM: conversations listener failed', err);
-    onChange(null, err);
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs
+        .map((d) => d.data())
+        .filter((conv) => conv.lastMessage)
+        // "Remove" (see removeConversationForMe) hides a conversation from
+        // just the person who removed it, by adding their own uid to
+        // hiddenFor — the other participant's copy of the same doc, and
+        // their own chat list, are completely untouched.
+        .filter(
+          (conv) =>
+            !(Array.isArray(conv.hiddenFor) && conv.hiddenFor.includes(uid)),
+        )
+        .map((conv) => {
+          const otherUid =
+            conv.participants.find((p) => p !== uid) || conv.participants[0];
+          const otherInfo =
+            conv.participantsInfo && conv.participantsInfo[otherUid];
+          return otherInfo
+            ? { other: otherInfo, otherUid, lastMessage: conv.lastMessage }
+            : null;
+        })
+        .filter(Boolean);
+      onChange(rows);
+    },
+    (err) => {
+      console.error("HUM: conversations listener failed", err);
+      onChange(null, err);
+    },
+  );
 }
 
 /* ===================================================================
@@ -1926,24 +2091,24 @@ function watchUserConversations(uid, onChange){
 // Hides conversation convId from just `uid`'s own chat list — used by
 // both removeConversationForMe() and blockUser() below. No-ops quietly
 // if the conversation doesn't exist yet (nothing to hide).
-async function hideConversationFor(uid, otherUid){
+async function hideConversationFor(uid, otherUid) {
   requireFirebaseConfig();
   const convId = conversationId(uid, otherUid);
-  const ref = doc(db, 'conversations', convId);
+  const ref = doc(db, "conversations", convId);
   const snap = await getDoc(ref);
-  if(!snap.exists()) return;
-  await setDoc(ref, { hiddenFor: arrayUnion(uid) }, { merge:true });
+  if (!snap.exists()) return;
+  await setDoc(ref, { hiddenFor: arrayUnion(uid) }, { merge: true });
 }
 
 // "Remove a person" — hides the conversation from the signed-in user's
 // own chat list only. Does not touch the other participant's account,
 // profile, or their copy of the conversation in any way.
-async function removeConversationForMe(meUid, otherUid){
+async function removeConversationForMe(meUid, otherUid) {
   await hideConversationFor(meUid, otherUid);
 }
 
-function blockedDocRef(meUid, otherUid){
-  return doc(db, 'users', meUid, 'blocked', otherUid);
+function blockedDocRef(meUid, otherUid) {
+  return doc(db, "users", meUid, "blocked", otherUid);
 }
 
 // Blocks otherUser for meUser: writes the block record (this is what
@@ -1951,13 +2116,13 @@ function blockedDocRef(meUid, otherUid){
 // direction — see the rules comment above) and, since a block implies
 // "I don't want to see this conversation anymore", also hides the
 // conversation the same way Remove does.
-async function blockUser(meUid, otherUser){
+async function blockUser(meUid, otherUser) {
   requireFirebaseConfig();
   await setDoc(blockedDocRef(meUid, otherUser.uid), {
     blockedUid: otherUser.uid,
     blockedUsername: otherUser.username,
     blockedDisplayName: otherUser.displayName,
-    blockedAvatar: otherUser.avatar || { type:'generated' },
+    blockedAvatar: otherUser.avatar || { type: "generated" },
     createdAt: new Date().toISOString(),
   });
   await hideConversationFor(meUid, otherUser.uid).catch((e) => {
@@ -1965,14 +2130,14 @@ async function blockUser(meUid, otherUser){
     // for safety (enforced server-side); failing to also hide the
     // now-stale conversation row is a cosmetic follow-up, not a reason
     // to report the whole action as failed.
-    console.error('HUM: blocked user but failed to hide conversation', e);
+    console.error("HUM: blocked user but failed to hide conversation", e);
   });
 }
 
 // Restores normal messaging with otherUid. Does not un-hide any
 // conversation on its own — same as an ordinary Remove, it reappears
 // the moment either side sends a new message (see addMessage()).
-async function unblockUser(meUid, otherUid){
+async function unblockUser(meUid, otherUid) {
   requireFirebaseConfig();
   await deleteDoc(blockedDocRef(meUid, otherUid));
 }
@@ -1980,15 +2145,22 @@ async function unblockUser(meUid, otherUid){
 // Live-subscribes to the signed-in user's own block list. Only ever
 // reads users/{uid}/blocked for `uid === the signed-in user` — the
 // security rules don't allow reading anyone else's.
-function watchBlockedUsers(uid, onChange){
+function watchBlockedUsers(uid, onChange) {
   requireFirebaseConfig();
-  const q = fbQuery(collection(db, 'users', uid, 'blocked'), orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snap) => {
-    onChange(snap.docs.map(d => d.data()));
-  }, (err) => {
-    console.error('HUM: blocked-users listener failed', err);
-    onChange(null, err);
-  });
+  const q = fbQuery(
+    collection(db, "users", uid, "blocked"),
+    orderBy("createdAt", "desc"),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      onChange(snap.docs.map((d) => d.data()));
+    },
+    (err) => {
+      console.error("HUM: blocked-users listener failed", err);
+      onChange(null, err);
+    },
+  );
 }
 
 /* ===================================================================
@@ -1998,428 +2170,676 @@ function watchBlockedUsers(uid, onChange){
 
 const translations = {
   en: {
-    common:{
-      username:'Username', usernamePlaceholder:'yourname',
-      password:'Password', passwordPlaceholder:'••••••••',
-      confirmPassword:'Confirm password',
-      displayName:'Display name', displayNamePlaceholder:'Aziza Karimova',
-      bio:'About', bioPlaceholder:'Say something about yourself',
-      show:'Show', hide:'Hide', cancel:'Cancel', saveChanges:'Save changes',
-      close:'Close', back:'Back', avatarTooLarge:'Image is too large (max 700KB).',
-      loading:'Loading…', moreOptions:'More options',
-      remove:'Remove', block:'Block', unblock:'Unblock', confirm:'Confirm', delete:'Delete'
+    common: {
+      username: "Username",
+      usernamePlaceholder: "yourname",
+      password: "Password",
+      passwordPlaceholder: "••••••••",
+      confirmPassword: "Confirm password",
+      displayName: "Display name",
+      displayNamePlaceholder: "Aziza Karimova",
+      bio: "About",
+      bioPlaceholder: "Say something about yourself",
+      show: "Show",
+      hide: "Hide",
+      cancel: "Cancel",
+      saveChanges: "Save changes",
+      close: "Close",
+      back: "Back",
+      avatarTooLarge: "Image is too large (max 700KB).",
+      loading: "Loading…",
+      moreOptions: "More options",
+      remove: "Remove",
+      block: "Block",
+      unblock: "Unblock",
+      confirm: "Confirm",
+      delete: "Delete",
     },
-    errors:{
-      network:'Something went wrong connecting to HUM. Check your connection and try again.',
-      userNotFound:'That account could not be found.',
-      requiresRecentLogin:'Please log out and log back in, then try again.',
-      sendFailed:'This message could not be delivered.'
+    errors: {
+      network:
+        "Something went wrong connecting to HUM. Check your connection and try again.",
+      userNotFound: "That account could not be found.",
+      requiresRecentLogin: "Please log out and log back in, then try again.",
+      sendFailed: "This message could not be delivered.",
     },
-    langScreen:{
-      title:'Choose your language', subtitle:'You can change this anytime in Settings.'
+    langScreen: {
+      title: "Choose your language",
+      subtitle: "You can change this anytime in Settings.",
     },
-    auth:{
-      showcase:{
-        title:'Every conversation has a frequency.',
-        body:"Find people, build your profile, and get ready to talk — HUM keeps the signal clean and the noise out.",
-        point1:'Search people by name or @username',
-        point2:"A profile that's actually yours",
-        point3:'Works in English, Русский and O‘zbek'
+    auth: {
+      showcase: {
+        title: "Every conversation has a frequency.",
+        body: "Find people, build your profile, and get ready to talk — HUM keeps the signal clean and the noise out.",
+        point1: "Search people by name or @username",
+        point2: "A profile that's actually yours",
+        point3: "Works in English, Русский and O‘zbek",
       },
-      tabs:{login:'Log in', register:'Create account'},
-      login:{
-        title:'Welcome back', subtitle:'Log in to pick up where you left off.',
-        submit:'Log in', switchPrompt:'No account yet?', switchAction:'Create one',
-        errorInvalid:'Username or password is incorrect.'
+      tabs: { login: "Log in", register: "Create account" },
+      login: {
+        title: "Welcome back",
+        subtitle: "Log in to pick up where you left off.",
+        submit: "Log in",
+        switchPrompt: "No account yet?",
+        switchAction: "Create one",
+        errorInvalid: "Username or password is incorrect.",
       },
-      register:{
-        title:'Set your frequency', subtitle:"A few details and you're in.",
-        usernameHint:'3–20 characters: letters, numbers, underscore.',
-        passwordHint:'At least 6 characters.',
-        submit:'Create account', switchPrompt:'Already have an account?', switchAction:'Log in'
+      register: {
+        title: "Set your frequency",
+        subtitle: "A few details and you're in.",
+        usernameHint: "3–20 characters: letters, numbers, underscore.",
+        passwordHint: "At least 6 characters.",
+        submit: "Create account",
+        switchPrompt: "Already have an account?",
+        switchAction: "Log in",
       },
-      validation:{
-        required:'This field is required.',
-        usernameFormat:'Use 3–20 letters, numbers or underscores.',
-        usernameTaken:'This username is already taken.',
-        passwordShort:'Password must be at least 6 characters.',
-        passwordMismatch:"Passwords don't match.",
-        displayNameShort:'Enter a display name.'
-      }
-    },
-    nav:{chats:'Chats', people:'People', profile:'Profile', settings:'Settings', logout:'Log out'},
-    chats:{
-      title:'Chats', emptyTitle:"It's quiet in here",
-      emptyBody:'Real-time messaging is on the way. For now, find people and get your profile ready.',
-      emptyAction:'Find people'
-    },
-    people:{
-      title:'Find people', searchPlaceholder:'Search by name or @username',
-      empty:'No one matches that search.', hint:'Search by display name or @username.',
-      view:'View', you:'You'
-    },
-    welcome:{title:'Welcome to HUM', body:'Search for someone on the left, or open your profile to make it your own.'},
-    profile:{
-      title:'Your profile', edit:'Edit profile', backToView:'Done',
-      avatar:{upload:'Upload photo', remove:'Remove'},
-      joined:'Joined', noBio:'No bio yet.',
-      saved:'Profile updated.', message:'Message', comingSoon:'Real-time messaging is coming in a future version of HUM.'
-    },
-    chat:{
-      emptyTitle:'Start the conversation', inputPlaceholder:'Message', send:'Send',
-      youPrefix:'You: ', blockedNotice:"You've blocked this person.",
-      typingIndicator:'Typing...',
-      receiptSent:'Sent', receiptRead:'Read',
-      messageDeleted:'This message was deleted',
-      voice:{
-        record:'Record voice message', stop:'Stop', cancel:'Cancel', recording:'Recording',
-        uploading:'Uploading voice message…', sent:'Voice message sent',
-        micDenied:'Failed to access microphone', unsupported:'Voice messages are not supported in this browser',
-        recordFailed:'Recording failed', emptyRecording:'Recording was too short',
-        uploadFailed:'Upload failed', playbackError:'Playback error',
-        play:'Play voice message', pause:'Pause voice message', listPreview:'🎤 Voice message'
+      validation: {
+        required: "This field is required.",
+        usernameFormat: "Use 3–20 letters, numbers or underscores.",
+        usernameTaken: "This username is already taken.",
+        passwordShort: "Password must be at least 6 characters.",
+        passwordMismatch: "Passwords don't match.",
+        displayNameShort: "Enter a display name.",
       },
-      attach:{
-        button:'Attach file', uploading:'Uploading {name}…', sent:'Sent {name}',
-        uploadFailed:'Failed to upload {name}',
-        tooLarge:'File "{name}" is too large (max 20 MB).',
-        unsupportedType:'File "{name}" isn\'t a supported type.',
-        image:'Photo', fileFallbackName:'File', download:'Download',
-        downloadFailed:'Failed to open file', imageLoadFailed:'Failed to load image',
-        listPreviewPhoto:'📷 Photo', listPreviewFile:'📎 File: {name}'
-      }
     },
-    menu:{
-      remove:'Remove', block:'Block', unblock:'Unblock',
-      deleteForMe:'Delete for me', deleteForEveryone:'Delete for everyone'
+    nav: {
+      chats: "Chats",
+      people: "People",
+      profile: "Profile",
+      settings: "Settings",
+      logout: "Log out",
     },
-    confirm:{
-      removeTitle:'Remove this chat?',
-      removeBody:'This removes the conversation from your chat list. {name} will keep their copy of it, and you can start a new conversation with them anytime.',
-      blockTitle:'Block {name}?',
-      blockBody:"{name} won't be able to message you, and you won't see them in search or your chat list. You can unblock them anytime in Settings.",
-      unblockTitle:'Unblock {name}?',
-      unblockBody:"{name} will be able to message you again, and will reappear in search.",
-      deleteMeTitle:'Delete this message for you?',
-      deleteMeBody:'This removes the message from your own view only — the other person will still see it.',
-      deleteEveryoneTitle:'Delete this message for everyone?',
-      deleteEveryoneBody:'This replaces the message with "This message was deleted" for both you and {name}. This can\'t be undone.'
+    chats: {
+      title: "Chats",
+      emptyTitle: "It's quiet in here",
+      emptyBody:
+        "Real-time messaging is on the way. For now, find people and get your profile ready.",
+      emptyAction: "Find people",
     },
-    settings:{
-      title:'Settings',
-      language:'Language', languageHint:'Choose the language HUM speaks to you in.',
-      appearance:'Appearance', appearanceHint:'Switch between a dark or light signal.',
-      dark:'Dark', light:'Light',
-      privacy:'Privacy', privacyHint:"People you've blocked can't message you, and you won't see them in search.",
-      blockedUsersEmpty:"You haven't blocked anyone.",
-      account:'Account', accountHint:'Signed in as {username}.'
+    people: {
+      title: "Find people",
+      searchPlaceholder: "Search by name or @username",
+      empty: "No one matches that search.",
+      hint: "Search by display name or @username.",
+      view: "View",
+      you: "You",
     },
-    toast:{
-      loggedIn:'Welcome back, {name}.', accountCreated:'Account created. Welcome, {name}!',
-      loggedOut:'Logged out.', profileSaved:'Profile updated.', langChanged:'Language switched.',
-      chatRemoved:'Chat removed.', userBlocked:'{name} has been blocked.', userUnblocked:'{name} has been unblocked.',
-      messageDeletedForMe:'Message deleted for you.', messageDeletedEveryone:'Message deleted.'
-    }
+    welcome: {
+      title: "Welcome to HUM",
+      body: "Search for someone on the left, or open your profile to make it your own.",
+    },
+    profile: {
+      title: "Your profile",
+      edit: "Edit profile",
+      backToView: "Done",
+      avatar: { upload: "Upload photo", remove: "Remove" },
+      joined: "Joined",
+      noBio: "No bio yet.",
+      saved: "Profile updated.",
+      message: "Message",
+      comingSoon: "Real-time messaging is coming in a future version of HUM.",
+    },
+    chat: {
+      emptyTitle: "Start the conversation",
+      inputPlaceholder: "Message",
+      send: "Send",
+      youPrefix: "You: ",
+      blockedNotice: "You've blocked this person.",
+      typingIndicator: "Typing...",
+      receiptSent: "Sent",
+      receiptRead: "Read",
+      messageDeleted: "This message was deleted",
+      voice: {
+        record: "Record voice message",
+        stop: "Stop",
+        cancel: "Cancel",
+        recording: "Recording",
+        uploading: "Uploading voice message…",
+        sent: "Voice message sent",
+        micDenied: "Failed to access microphone",
+        unsupported: "Voice messages are not supported in this browser",
+        recordFailed: "Recording failed",
+        emptyRecording: "Recording was too short",
+        uploadFailed: "Upload failed",
+        playbackError: "Playback error",
+        play: "Play voice message",
+        pause: "Pause voice message",
+        listPreview: "🎤 Voice message",
+      },
+      attach: {
+        button: "Attach file",
+        uploading: "Uploading {name}…",
+        sent: "Sent {name}",
+        uploadFailed: "Failed to upload {name}",
+        tooLarge: 'File "{name}" is too large (max 20 MB).',
+        unsupportedType: 'File "{name}" isn\'t a supported type.',
+        image: "Photo",
+        fileFallbackName: "File",
+        download: "Download",
+        downloadFailed: "Failed to open file",
+        imageLoadFailed: "Failed to load image",
+        listPreviewPhoto: "📷 Photo",
+        listPreviewFile: "📎 File: {name}",
+      },
+    },
+    menu: {
+      remove: "Remove",
+      block: "Block",
+      unblock: "Unblock",
+      deleteForMe: "Delete for me",
+      deleteForEveryone: "Delete for everyone",
+    },
+    confirm: {
+      removeTitle: "Remove this chat?",
+      removeBody:
+        "This removes the conversation from your chat list. {name} will keep their copy of it, and you can start a new conversation with them anytime.",
+      blockTitle: "Block {name}?",
+      blockBody:
+        "{name} won't be able to message you, and you won't see them in search or your chat list. You can unblock them anytime in Settings.",
+      unblockTitle: "Unblock {name}?",
+      unblockBody:
+        "{name} will be able to message you again, and will reappear in search.",
+      deleteMeTitle: "Delete this message for you?",
+      deleteMeBody:
+        "This removes the message from your own view only — the other person will still see it.",
+      deleteEveryoneTitle: "Delete this message for everyone?",
+      deleteEveryoneBody:
+        'This replaces the message with "This message was deleted" for both you and {name}. This can\'t be undone.',
+    },
+    settings: {
+      title: "Settings",
+      language: "Language",
+      languageHint: "Choose the language HUM speaks to you in.",
+      appearance: "Appearance",
+      appearanceHint: "Switch between a dark or light signal.",
+      dark: "Dark",
+      light: "Light",
+      privacy: "Privacy",
+      privacyHint:
+        "People you've blocked can't message you, and you won't see them in search.",
+      blockedUsersEmpty: "You haven't blocked anyone.",
+      account: "Account",
+      accountHint: "Signed in as {username}.",
+    },
+    toast: {
+      loggedIn: "Welcome back, {name}.",
+      accountCreated: "Account created. Welcome, {name}!",
+      loggedOut: "Logged out.",
+      profileSaved: "Profile updated.",
+      langChanged: "Language switched.",
+      chatRemoved: "Chat removed.",
+      userBlocked: "{name} has been blocked.",
+      userUnblocked: "{name} has been unblocked.",
+      messageDeletedForMe: "Message deleted for you.",
+      messageDeletedEveryone: "Message deleted.",
+    },
   },
 
   ru: {
-    common:{
-      username:'Имя пользователя', usernamePlaceholder:'yourname',
-      password:'Пароль', passwordPlaceholder:'••••••••',
-      confirmPassword:'Подтвердите пароль',
-      displayName:'Отображаемое имя', displayNamePlaceholder:'Азиза Каримова',
-      bio:'О себе', bioPlaceholder:'Расскажите немного о себе',
-      show:'Показать', hide:'Скрыть', cancel:'Отмена', saveChanges:'Сохранить',
-      close:'Закрыть', back:'Назад', avatarTooLarge:'Изображение слишком большое (макс. 700КБ).',
-      loading:'Загрузка…', moreOptions:'Ещё',
-      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать', confirm:'Подтвердить', delete:'Удалить'
+    common: {
+      username: "Имя пользователя",
+      usernamePlaceholder: "yourname",
+      password: "Пароль",
+      passwordPlaceholder: "••••••••",
+      confirmPassword: "Подтвердите пароль",
+      displayName: "Отображаемое имя",
+      displayNamePlaceholder: "Азиза Каримова",
+      bio: "О себе",
+      bioPlaceholder: "Расскажите немного о себе",
+      show: "Показать",
+      hide: "Скрыть",
+      cancel: "Отмена",
+      saveChanges: "Сохранить",
+      close: "Закрыть",
+      back: "Назад",
+      avatarTooLarge: "Изображение слишком большое (макс. 700КБ).",
+      loading: "Загрузка…",
+      moreOptions: "Ещё",
+      remove: "Удалить",
+      block: "Заблокировать",
+      unblock: "Разблокировать",
+      confirm: "Подтвердить",
+      delete: "Удалить",
     },
-    errors:{
-      network:'Не удалось подключиться к HUM. Проверьте соединение и попробуйте снова.',
-      userNotFound:'Такой аккаунт не найден.',
-      requiresRecentLogin:'Выйдите из аккаунта и войдите снова, затем повторите попытку.',
-      sendFailed:'Это сообщение не удалось доставить.'
+    errors: {
+      network:
+        "Не удалось подключиться к HUM. Проверьте соединение и попробуйте снова.",
+      userNotFound: "Такой аккаунт не найден.",
+      requiresRecentLogin:
+        "Выйдите из аккаунта и войдите снова, затем повторите попытку.",
+      sendFailed: "Это сообщение не удалось доставить.",
     },
-    langScreen:{
-      title:'Выберите язык', subtitle:'Вы всегда сможете изменить его в настройках.'
+    langScreen: {
+      title: "Выберите язык",
+      subtitle: "Вы всегда сможете изменить его в настройках.",
     },
-    auth:{
-      showcase:{
-        title:'У каждого разговора своя частота.',
-        body:'Находите людей, создавайте профиль и будьте готовы к общению — HUM убирает лишний шум.',
-        point1:'Поиск людей по имени или @username',
-        point2:'Профиль, который действительно ваш',
-        point3:'Работает на English, Русском и O‘zbek'
+    auth: {
+      showcase: {
+        title: "У каждого разговора своя частота.",
+        body: "Находите людей, создавайте профиль и будьте готовы к общению — HUM убирает лишний шум.",
+        point1: "Поиск людей по имени или @username",
+        point2: "Профиль, который действительно ваш",
+        point3: "Работает на English, Русском и O‘zbek",
       },
-      tabs:{login:'Войти', register:'Создать аккаунт'},
-      login:{
-        title:'С возвращением', subtitle:'Войдите, чтобы продолжить с того же места.',
-        submit:'Войти', switchPrompt:'Ещё нет аккаунта?', switchAction:'Создать',
-        errorInvalid:'Неверное имя пользователя или пароль.'
+      tabs: { login: "Войти", register: "Создать аккаунт" },
+      login: {
+        title: "С возвращением",
+        subtitle: "Войдите, чтобы продолжить с того же места.",
+        submit: "Войти",
+        switchPrompt: "Ещё нет аккаунта?",
+        switchAction: "Создать",
+        errorInvalid: "Неверное имя пользователя или пароль.",
       },
-      register:{
-        title:'Настройте свою частоту', subtitle:'Ещё пара деталей — и вы внутри.',
-        usernameHint:'3–20 символов: буквы, цифры, подчёркивание.',
-        passwordHint:'Минимум 6 символов.',
-        submit:'Создать аккаунт', switchPrompt:'Уже есть аккаунт?', switchAction:'Войти'
+      register: {
+        title: "Настройте свою частоту",
+        subtitle: "Ещё пара деталей — и вы внутри.",
+        usernameHint: "3–20 символов: буквы, цифры, подчёркивание.",
+        passwordHint: "Минимум 6 символов.",
+        submit: "Создать аккаунт",
+        switchPrompt: "Уже есть аккаунт?",
+        switchAction: "Войти",
       },
-      validation:{
-        required:'Это поле обязательно.',
-        usernameFormat:'Используйте 3–20 букв, цифр или подчёркиваний.',
-        usernameTaken:'Это имя пользователя уже занято.',
-        passwordShort:'Пароль должен содержать минимум 6 символов.',
-        passwordMismatch:'Пароли не совпадают.',
-        displayNameShort:'Введите отображаемое имя.'
-      }
-    },
-    nav:{chats:'Чаты', people:'Люди', profile:'Профиль', settings:'Настройки', logout:'Выйти'},
-    chats:{
-      title:'Чаты', emptyTitle:'Здесь пока тихо',
-      emptyBody:'Обмен сообщениями в реальном времени скоро появится. А пока — найдите людей и настройте профиль.',
-      emptyAction:'Найти людей'
-    },
-    people:{
-      title:'Найти людей', searchPlaceholder:'Поиск по имени или @username',
-      empty:'Никого не найдено.', hint:'Ищите по имени или @username.',
-      view:'Открыть', you:'Вы'
-    },
-    welcome:{title:'Добро пожаловать в HUM', body:'Найдите кого-нибудь слева или откройте свой профиль, чтобы настроить его.'},
-    profile:{
-      title:'Ваш профиль', edit:'Редактировать', backToView:'Готово',
-      avatar:{upload:'Загрузить фото', remove:'Удалить'},
-      joined:'Регистрация', noBio:'Пока нет описания.',
-      saved:'Профиль обновлён.', message:'Написать', comingSoon:'Обмен сообщениями появится в будущей версии HUM.'
-    },
-    chat:{
-      emptyTitle:'Начните разговор', inputPlaceholder:'Сообщение', send:'Отправить',
-      youPrefix:'Вы: ', blockedNotice:'Вы заблокировали этого человека.',
-      typingIndicator:'Печатает...',
-      receiptSent:'Отправлено', receiptRead:'Прочитано',
-      messageDeleted:'Это сообщение удалено',
-      voice:{
-        record:'Записать голосовое сообщение', stop:'Стоп', cancel:'Отмена', recording:'Запись',
-        uploading:'Загрузка голосового сообщения…', sent:'Голосовое сообщение отправлено',
-        micDenied:'Не удалось получить доступ к микрофону', unsupported:'Голосовые сообщения не поддерживаются в этом браузере',
-        recordFailed:'Ошибка записи', emptyRecording:'Запись слишком короткая',
-        uploadFailed:'Ошибка загрузки', playbackError:'Ошибка воспроизведения',
-        play:'Воспроизвести голосовое сообщение', pause:'Приостановить голосовое сообщение', listPreview:'🎤 Голосовое сообщение'
+      validation: {
+        required: "Это поле обязательно.",
+        usernameFormat: "Используйте 3–20 букв, цифр или подчёркиваний.",
+        usernameTaken: "Это имя пользователя уже занято.",
+        passwordShort: "Пароль должен содержать минимум 6 символов.",
+        passwordMismatch: "Пароли не совпадают.",
+        displayNameShort: "Введите отображаемое имя.",
       },
-      attach:{
-        button:'Прикрепить файл', uploading:'Загрузка {name}…', sent:'{name} отправлен(о)',
-        uploadFailed:'Не удалось загрузить {name}',
-        tooLarge:'Файл «{name}» слишком большой (макс. 20 МБ).',
-        unsupportedType:'Файл «{name}» неподдерживаемого типа.',
-        image:'Фото', fileFallbackName:'Файл', download:'Скачать',
-        downloadFailed:'Не удалось открыть файл', imageLoadFailed:'Не удалось загрузить изображение',
-        listPreviewPhoto:'📷 Фото', listPreviewFile:'📎 Файл: {name}'
-      }
     },
-    menu:{
-      remove:'Удалить', block:'Заблокировать', unblock:'Разблокировать',
-      deleteForMe:'Удалить у меня', deleteForEveryone:'Удалить у всех'
+    nav: {
+      chats: "Чаты",
+      people: "Люди",
+      profile: "Профиль",
+      settings: "Настройки",
+      logout: "Выйти",
     },
-    confirm:{
-      removeTitle:'Удалить этот чат?',
-      removeBody:'Разговор будет удалён из вашего списка чатов. У {name} останется своя копия, и вы всегда сможете начать переписку заново.',
-      blockTitle:'Заблокировать {name}?',
-      blockBody:'{name} не сможет писать вам, и вы не увидите этого пользователя в поиске или списке чатов. Разблокировать можно в любой момент в Настройках.',
-      unblockTitle:'Разблокировать {name}?',
-      unblockBody:'{name} снова сможет писать вам и появится в поиске.',
-      deleteMeTitle:'Удалить это сообщение только у вас?',
-      deleteMeBody:'Сообщение исчезнет только из вашей переписки — у {name} оно останется.',
-      deleteEveryoneTitle:'Удалить это сообщение у всех?',
-      deleteEveryoneBody:'Сообщение будет заменено на «Сообщение удалено» и у вас, и у {name}. Это действие нельзя отменить.'
+    chats: {
+      title: "Чаты",
+      emptyTitle: "Здесь пока тихо",
+      emptyBody:
+        "Обмен сообщениями в реальном времени скоро появится. А пока — найдите людей и настройте профиль.",
+      emptyAction: "Найти людей",
     },
-    settings:{
-      title:'Настройки',
-      language:'Язык', languageHint:'Выберите язык интерфейса HUM.',
-      appearance:'Внешний вид', appearanceHint:'Переключение между тёмным и светлым режимом.',
-      dark:'Тёмная', light:'Светлая',
-      privacy:'Приватность', privacyHint:'Заблокированные пользователи не смогут писать вам и не будут видны в поиске.',
-      blockedUsersEmpty:'Вы никого не заблокировали.',
-      account:'Аккаунт', accountHint:'Вы вошли как {username}.'
+    people: {
+      title: "Найти людей",
+      searchPlaceholder: "Поиск по имени или @username",
+      empty: "Никого не найдено.",
+      hint: "Ищите по имени или @username.",
+      view: "Открыть",
+      you: "Вы",
     },
-    toast:{
-      loggedIn:'С возвращением, {name}.', accountCreated:'Аккаунт создан. Добро пожаловать, {name}!',
-      loggedOut:'Вы вышли из аккаунта.', profileSaved:'Профиль обновлён.', langChanged:'Язык изменён.',
-      chatRemoved:'Чат удалён.', userBlocked:'{name} заблокирован(а).', userUnblocked:'{name} разблокирован(а).',
-      messageDeletedForMe:'Сообщение удалено у вас.', messageDeletedEveryone:'Сообщение удалено.'
-    }
+    welcome: {
+      title: "Добро пожаловать в HUM",
+      body: "Найдите кого-нибудь слева или откройте свой профиль, чтобы настроить его.",
+    },
+    profile: {
+      title: "Ваш профиль",
+      edit: "Редактировать",
+      backToView: "Готово",
+      avatar: { upload: "Загрузить фото", remove: "Удалить" },
+      joined: "Регистрация",
+      noBio: "Пока нет описания.",
+      saved: "Профиль обновлён.",
+      message: "Написать",
+      comingSoon: "Обмен сообщениями появится в будущей версии HUM.",
+    },
+    chat: {
+      emptyTitle: "Начните разговор",
+      inputPlaceholder: "Сообщение",
+      send: "Отправить",
+      youPrefix: "Вы: ",
+      blockedNotice: "Вы заблокировали этого человека.",
+      typingIndicator: "Печатает...",
+      receiptSent: "Отправлено",
+      receiptRead: "Прочитано",
+      messageDeleted: "Это сообщение удалено",
+      voice: {
+        record: "Записать голосовое сообщение",
+        stop: "Стоп",
+        cancel: "Отмена",
+        recording: "Запись",
+        uploading: "Загрузка голосового сообщения…",
+        sent: "Голосовое сообщение отправлено",
+        micDenied: "Не удалось получить доступ к микрофону",
+        unsupported: "Голосовые сообщения не поддерживаются в этом браузере",
+        recordFailed: "Ошибка записи",
+        emptyRecording: "Запись слишком короткая",
+        uploadFailed: "Ошибка загрузки",
+        playbackError: "Ошибка воспроизведения",
+        play: "Воспроизвести голосовое сообщение",
+        pause: "Приостановить голосовое сообщение",
+        listPreview: "🎤 Голосовое сообщение",
+      },
+      attach: {
+        button: "Прикрепить файл",
+        uploading: "Загрузка {name}…",
+        sent: "{name} отправлен(о)",
+        uploadFailed: "Не удалось загрузить {name}",
+        tooLarge: "Файл «{name}» слишком большой (макс. 20 МБ).",
+        unsupportedType: "Файл «{name}» неподдерживаемого типа.",
+        image: "Фото",
+        fileFallbackName: "Файл",
+        download: "Скачать",
+        downloadFailed: "Не удалось открыть файл",
+        imageLoadFailed: "Не удалось загрузить изображение",
+        listPreviewPhoto: "📷 Фото",
+        listPreviewFile: "📎 Файл: {name}",
+      },
+    },
+    menu: {
+      remove: "Удалить",
+      block: "Заблокировать",
+      unblock: "Разблокировать",
+      deleteForMe: "Удалить у меня",
+      deleteForEveryone: "Удалить у всех",
+    },
+    confirm: {
+      removeTitle: "Удалить этот чат?",
+      removeBody:
+        "Разговор будет удалён из вашего списка чатов. У {name} останется своя копия, и вы всегда сможете начать переписку заново.",
+      blockTitle: "Заблокировать {name}?",
+      blockBody:
+        "{name} не сможет писать вам, и вы не увидите этого пользователя в поиске или списке чатов. Разблокировать можно в любой момент в Настройках.",
+      unblockTitle: "Разблокировать {name}?",
+      unblockBody: "{name} снова сможет писать вам и появится в поиске.",
+      deleteMeTitle: "Удалить это сообщение только у вас?",
+      deleteMeBody:
+        "Сообщение исчезнет только из вашей переписки — у {name} оно останется.",
+      deleteEveryoneTitle: "Удалить это сообщение у всех?",
+      deleteEveryoneBody:
+        "Сообщение будет заменено на «Сообщение удалено» и у вас, и у {name}. Это действие нельзя отменить.",
+    },
+    settings: {
+      title: "Настройки",
+      language: "Язык",
+      languageHint: "Выберите язык интерфейса HUM.",
+      appearance: "Внешний вид",
+      appearanceHint: "Переключение между тёмным и светлым режимом.",
+      dark: "Тёмная",
+      light: "Светлая",
+      privacy: "Приватность",
+      privacyHint:
+        "Заблокированные пользователи не смогут писать вам и не будут видны в поиске.",
+      blockedUsersEmpty: "Вы никого не заблокировали.",
+      account: "Аккаунт",
+      accountHint: "Вы вошли как {username}.",
+    },
+    toast: {
+      loggedIn: "С возвращением, {name}.",
+      accountCreated: "Аккаунт создан. Добро пожаловать, {name}!",
+      loggedOut: "Вы вышли из аккаунта.",
+      profileSaved: "Профиль обновлён.",
+      langChanged: "Язык изменён.",
+      chatRemoved: "Чат удалён.",
+      userBlocked: "{name} заблокирован(а).",
+      userUnblocked: "{name} разблокирован(а).",
+      messageDeletedForMe: "Сообщение удалено у вас.",
+      messageDeletedEveryone: "Сообщение удалено.",
+    },
   },
 
   uz: {
-    common:{
-      username:'Foydalanuvchi nomi', usernamePlaceholder:'yourname',
-      password:'Parol', passwordPlaceholder:'••••••••',
-      confirmPassword:'Parolni tasdiqlang',
-      displayName:'Ko‘rinadigan ism', displayNamePlaceholder:'Aziza Karimova',
-      bio:'Men haqimda', bioPlaceholder:'O‘zingiz haqingizda yozing',
-      show:'Ko‘rsatish', hide:'Yashirish', cancel:'Bekor qilish', saveChanges:'Saqlash',
-      close:'Yopish', back:'Orqaga', avatarTooLarge:'Rasm hajmi juda katta (maks. 700KB).',
-      loading:'Yuklanmoqda…', moreOptions:'Yana',
-      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish', confirm:'Tasdiqlash', delete:'Oʻchirish'
+    common: {
+      username: "Foydalanuvchi nomi",
+      usernamePlaceholder: "yourname",
+      password: "Parol",
+      passwordPlaceholder: "••••••••",
+      confirmPassword: "Parolni tasdiqlang",
+      displayName: "Ko‘rinadigan ism",
+      displayNamePlaceholder: "Aziza Karimova",
+      bio: "Men haqimda",
+      bioPlaceholder: "O‘zingiz haqingizda yozing",
+      show: "Ko‘rsatish",
+      hide: "Yashirish",
+      cancel: "Bekor qilish",
+      saveChanges: "Saqlash",
+      close: "Yopish",
+      back: "Orqaga",
+      avatarTooLarge: "Rasm hajmi juda katta (maks. 700KB).",
+      loading: "Yuklanmoqda…",
+      moreOptions: "Yana",
+      remove: "Olib tashlash",
+      block: "Bloklash",
+      unblock: "Blokdan chiqarish",
+      confirm: "Tasdiqlash",
+      delete: "Oʻchirish",
     },
-    errors:{
-      network:'HUM bilan bog‘lanishda xatolik yuz berdi. Aloqani tekshirib, qayta urinib ko‘ring.',
-      userNotFound:'Bunday akkaunt topilmadi.',
-      requiresRecentLogin:'Hisobdan chiqib, qayta kiring va yana urinib ko‘ring.',
-      sendFailed:'Bu xabarni yetkazib bo‘lmadi.'
+    errors: {
+      network:
+        "HUM bilan bog‘lanishda xatolik yuz berdi. Aloqani tekshirib, qayta urinib ko‘ring.",
+      userNotFound: "Bunday akkaunt topilmadi.",
+      requiresRecentLogin:
+        "Hisobdan chiqib, qayta kiring va yana urinib ko‘ring.",
+      sendFailed: "Bu xabarni yetkazib bo‘lmadi.",
     },
-    langScreen:{
-      title:'Tilni tanlang', subtitle:'Buni istalgan vaqtda Sozlamalarda o‘zgartirishingiz mumkin.'
+    langScreen: {
+      title: "Tilni tanlang",
+      subtitle: "Buni istalgan vaqtda Sozlamalarda o‘zgartirishingiz mumkin.",
     },
-    auth:{
-      showcase:{
-        title:'Har bir suhbatning o‘z chastotasi bor.',
-        body:'Odamlarni toping, profilingizni yarating va muloqotga tayyor bo‘ling — HUM ortiqcha shovqinni olib tashlaydi.',
-        point1:'Odamlarni ism yoki @username orqali qidiring',
-        point2:'Chindan ham sizga tegishli profil',
-        point3:'English, Русский va O‘zbek tilida ishlaydi'
+    auth: {
+      showcase: {
+        title: "Har bir suhbatning o‘z chastotasi bor.",
+        body: "Odamlarni toping, profilingizni yarating va muloqotga tayyor bo‘ling — HUM ortiqcha shovqinni olib tashlaydi.",
+        point1: "Odamlarni ism yoki @username orqali qidiring",
+        point2: "Chindan ham sizga tegishli profil",
+        point3: "English, Русский va O‘zbek tilida ishlaydi",
       },
-      tabs:{login:'Kirish', register:'Ro‘yxatdan o‘tish'},
-      login:{
-        title:'Xush kelibsiz', subtitle:'Qolgan joydan davom eting.',
-        submit:'Kirish', switchPrompt:'Hali akkountingiz yo‘qmi?', switchAction:'Yaratish',
-        errorInvalid:'Foydalanuvchi nomi yoki parol noto‘g‘ri.'
+      tabs: { login: "Kirish", register: "Ro‘yxatdan o‘tish" },
+      login: {
+        title: "Xush kelibsiz",
+        subtitle: "Qolgan joydan davom eting.",
+        submit: "Kirish",
+        switchPrompt: "Hali akkountingiz yo‘qmi?",
+        switchAction: "Yaratish",
+        errorInvalid: "Foydalanuvchi nomi yoki parol noto‘g‘ri.",
       },
-      register:{
-        title:'Chastotangizni sozlang', subtitle:'Bir necha ma’lumot — va tayyor.',
-        usernameHint:'3–20 ta belgi: harflar, raqamlar, pastki chiziq.',
-        passwordHint:'Kamida 6 ta belgi.',
-        submit:'Akkount yaratish', switchPrompt:'Akkountingiz bormi?', switchAction:'Kirish'
+      register: {
+        title: "Chastotangizni sozlang",
+        subtitle: "Bir necha ma’lumot — va tayyor.",
+        usernameHint: "3–20 ta belgi: harflar, raqamlar, pastki chiziq.",
+        passwordHint: "Kamida 6 ta belgi.",
+        submit: "Akkount yaratish",
+        switchPrompt: "Akkountingiz bormi?",
+        switchAction: "Kirish",
       },
-      validation:{
-        required:'Ushbu maydon majburiy.',
-        usernameFormat:'3–20 ta harf, raqam yoki pastki chiziqdan foydalaning.',
-        usernameTaken:'Bu foydalanuvchi nomi allaqachon band.',
-        passwordShort:'Parol kamida 6 ta belgidan iborat bo‘lishi kerak.',
-        passwordMismatch:'Parollar mos kelmadi.',
-        displayNameShort:'Ko‘rinadigan ism kiriting.'
-      }
-    },
-    nav:{chats:'Suhbatlar', people:'Odamlar', profile:'Profil', settings:'Sozlamalar', logout:'Chiqish'},
-    chats:{
-      title:'Suhbatlar', emptyTitle:'Bu yerda hozircha jim',
-      emptyBody:'Real vaqtda xabar almashish tez orada qo‘shiladi. Hozircha odamlarni toping va profilingizni tayyorlang.',
-      emptyAction:'Odamlarni topish'
-    },
-    people:{
-      title:'Odamlarni topish', searchPlaceholder:'Ism yoki @username orqali qidiring',
-      empty:'Hech kim topilmadi.', hint:'Ism yoki @username orqali qidiring.',
-      view:'Ko‘rish', you:'Siz'
-    },
-    welcome:{title:'HUM ga xush kelibsiz', body:'Chapdan birovni qidiring yoki profilingizni o‘zingizga moslashtiring.'},
-    profile:{
-      title:'Sizning profilingiz', edit:'Tahrirlash', backToView:'Tayyor',
-      avatar:{upload:'Rasm yuklash', remove:'O‘chirish'},
-      joined:'Ro‘yxatdan o‘tgan', noBio:'Hozircha tavsif yo‘q.',
-      saved:'Profil yangilandi.', message:'Xabar yozish', comingSoon:'Real vaqtda xabar almashish HUM ning keyingi versiyasida qo‘shiladi.'
-    },
-    chat:{
-      emptyTitle:'Suhbatni boshlang', inputPlaceholder:'Xabar', send:'Yuborish',
-      youPrefix:'Siz: ', blockedNotice:'Siz bu odamni bloklagansiz.',
-      typingIndicator:'Yozmoqda...',
-      receiptSent:'Yuborildi', receiptRead:'Oʻqildi',
-      messageDeleted:'Bu xabar oʻchirildi',
-      voice:{
-        record:'Ovozli xabar yozish', stop:'Toʻxtatish', cancel:'Bekor qilish', recording:'Yozib olinmoqda',
-        uploading:'Ovozli xabar yuklanmoqda…', sent:'Ovozli xabar yuborildi',
-        micDenied:'Mikrofonga ruxsat berilmadi', unsupported:'Bu brauzerda ovozli xabarlar qoʻllab-quvvatlanmaydi',
-        recordFailed:'Yozib olishda xatolik', emptyRecording:'Yozuv juda qisqa',
-        uploadFailed:'Yuklashda xatolik', playbackError:'Ijro etishda xatolik',
-        play:'Ovozli xabarni ijro etish', pause:'Ovozli xabarni pauza qilish', listPreview:'🎤 Ovozli xabar'
+      validation: {
+        required: "Ushbu maydon majburiy.",
+        usernameFormat:
+          "3–20 ta harf, raqam yoki pastki chiziqdan foydalaning.",
+        usernameTaken: "Bu foydalanuvchi nomi allaqachon band.",
+        passwordShort: "Parol kamida 6 ta belgidan iborat bo‘lishi kerak.",
+        passwordMismatch: "Parollar mos kelmadi.",
+        displayNameShort: "Ko‘rinadigan ism kiriting.",
       },
-      attach:{
-        button:'Fayl biriktirish', uploading:'{name} yuklanmoqda…', sent:'{name} yuborildi',
-        uploadFailed:'{name} yuklanmadi',
-        tooLarge:'«{name}» fayli juda katta (maks. 20 MB).',
-        unsupportedType:'«{name}» fayli qoʻllab-quvvatlanmaydigan turda.',
-        image:'Rasm', fileFallbackName:'Fayl', download:'Yuklab olish',
-        downloadFailed:'Faylni ochib boʻlmadi', imageLoadFailed:'Rasmni yuklab boʻlmadi',
-        listPreviewPhoto:'📷 Rasm', listPreviewFile:'📎 Fayl: {name}'
-      }
     },
-    menu:{
-      remove:'Olib tashlash', block:'Bloklash', unblock:'Blokdan chiqarish',
-      deleteForMe:'Men uchun o‘chirish', deleteForEveryone:'Hamma uchun o‘chirish'
+    nav: {
+      chats: "Suhbatlar",
+      people: "Odamlar",
+      profile: "Profil",
+      settings: "Sozlamalar",
+      logout: "Chiqish",
     },
-    confirm:{
-      removeTitle:'Bu suhbat olib tashlansinmi?',
-      removeBody:'Suhbat sizning ro‘yxatingizdan olib tashlanadi. {name} da o‘z nusxasi qoladi, va istalgan vaqtda u bilan yangi suhbat boshlashingiz mumkin.',
-      blockTitle:'{name} bloklansinmi?',
-      blockBody:'{name} sizga xabar yoza olmaydi va u qidiruv yoki suhbatlar ro‘yxatida ko‘rinmaydi. Istalgan vaqtda Sozlamalarda blokdan chiqarishingiz mumkin.',
-      unblockTitle:'{name} blokdan chiqarilsinmi?',
-      unblockBody:'{name} sizga yana xabar yoza oladi va qidiruvda qayta ko‘rinadi.',
-      deleteMeTitle:'Bu xabar faqat siz uchun o‘chirilsinmi?',
-      deleteMeBody:'Xabar faqat sizning yozishmangizdan yo‘qoladi — {name} da u qoladi.',
-      deleteEveryoneTitle:'Bu xabar hamma uchun o‘chirilsinmi?',
-      deleteEveryoneBody:'Xabar sizda ham, {name} da ham «Xabar o‘chirildi» matniga almashtiriladi. Buni bekor qilib bo‘lmaydi.'
+    chats: {
+      title: "Suhbatlar",
+      emptyTitle: "Bu yerda hozircha jim",
+      emptyBody:
+        "Real vaqtda xabar almashish tez orada qo‘shiladi. Hozircha odamlarni toping va profilingizni tayyorlang.",
+      emptyAction: "Odamlarni topish",
     },
-    settings:{
-      title:'Sozlamalar',
-      language:'Til', languageHint:'HUM siz bilan gaplashadigan tilni tanlang.',
-      appearance:'Ko‘rinish', appearanceHint:'Tungi yoki kunduzgi rejim orasida almashing.',
-      dark:'Tungi', light:'Kunduzgi',
-      privacy:'Maxfiylik', privacyHint:'Siz bloklagan foydalanuvchilar sizga yoza olmaydi va qidiruvda ko‘rinmaydi.',
-      blockedUsersEmpty:'Siz hech kimni bloklamagansiz.',
-      account:'Akkount', accountHint:'Siz {username} sifatida kirdingiz.'
+    people: {
+      title: "Odamlarni topish",
+      searchPlaceholder: "Ism yoki @username orqali qidiring",
+      empty: "Hech kim topilmadi.",
+      hint: "Ism yoki @username orqali qidiring.",
+      view: "Ko‘rish",
+      you: "Siz",
     },
-    toast:{
-      loggedIn:'Xush kelibsiz, {name}.', accountCreated:'Akkount yaratildi. Xush kelibsiz, {name}!',
-      loggedOut:'Tizimdan chiqdingiz.', profileSaved:'Profil yangilandi.', langChanged:'Til o‘zgartirildi.',
-      chatRemoved:'Suhbat olib tashlandi.', userBlocked:'{name} bloklandi.', userUnblocked:'{name} blokdan chiqarildi.',
-      messageDeletedForMe:'Xabar siz uchun oʻchirildi.', messageDeletedEveryone:'Xabar oʻchirildi.'
-    }
-  }
+    welcome: {
+      title: "HUM ga xush kelibsiz",
+      body: "Chapdan birovni qidiring yoki profilingizni o‘zingizga moslashtiring.",
+    },
+    profile: {
+      title: "Sizning profilingiz",
+      edit: "Tahrirlash",
+      backToView: "Tayyor",
+      avatar: { upload: "Rasm yuklash", remove: "O‘chirish" },
+      joined: "Ro‘yxatdan o‘tgan",
+      noBio: "Hozircha tavsif yo‘q.",
+      saved: "Profil yangilandi.",
+      message: "Xabar yozish",
+      comingSoon:
+        "Real vaqtda xabar almashish HUM ning keyingi versiyasida qo‘shiladi.",
+    },
+    chat: {
+      emptyTitle: "Suhbatni boshlang",
+      inputPlaceholder: "Xabar",
+      send: "Yuborish",
+      youPrefix: "Siz: ",
+      blockedNotice: "Siz bu odamni bloklagansiz.",
+      typingIndicator: "Yozmoqda...",
+      receiptSent: "Yuborildi",
+      receiptRead: "Oʻqildi",
+      messageDeleted: "Bu xabar oʻchirildi",
+      voice: {
+        record: "Ovozli xabar yozish",
+        stop: "Toʻxtatish",
+        cancel: "Bekor qilish",
+        recording: "Yozib olinmoqda",
+        uploading: "Ovozli xabar yuklanmoqda…",
+        sent: "Ovozli xabar yuborildi",
+        micDenied: "Mikrofonga ruxsat berilmadi",
+        unsupported: "Bu brauzerda ovozli xabarlar qoʻllab-quvvatlanmaydi",
+        recordFailed: "Yozib olishda xatolik",
+        emptyRecording: "Yozuv juda qisqa",
+        uploadFailed: "Yuklashda xatolik",
+        playbackError: "Ijro etishda xatolik",
+        play: "Ovozli xabarni ijro etish",
+        pause: "Ovozli xabarni pauza qilish",
+        listPreview: "🎤 Ovozli xabar",
+      },
+      attach: {
+        button: "Fayl biriktirish",
+        uploading: "{name} yuklanmoqda…",
+        sent: "{name} yuborildi",
+        uploadFailed: "{name} yuklanmadi",
+        tooLarge: "«{name}» fayli juda katta (maks. 20 MB).",
+        unsupportedType: "«{name}» fayli qoʻllab-quvvatlanmaydigan turda.",
+        image: "Rasm",
+        fileFallbackName: "Fayl",
+        download: "Yuklab olish",
+        downloadFailed: "Faylni ochib boʻlmadi",
+        imageLoadFailed: "Rasmni yuklab boʻlmadi",
+        listPreviewPhoto: "📷 Rasm",
+        listPreviewFile: "📎 Fayl: {name}",
+      },
+    },
+    menu: {
+      remove: "Olib tashlash",
+      block: "Bloklash",
+      unblock: "Blokdan chiqarish",
+      deleteForMe: "Men uchun o‘chirish",
+      deleteForEveryone: "Hamma uchun o‘chirish",
+    },
+    confirm: {
+      removeTitle: "Bu suhbat olib tashlansinmi?",
+      removeBody:
+        "Suhbat sizning ro‘yxatingizdan olib tashlanadi. {name} da o‘z nusxasi qoladi, va istalgan vaqtda u bilan yangi suhbat boshlashingiz mumkin.",
+      blockTitle: "{name} bloklansinmi?",
+      blockBody:
+        "{name} sizga xabar yoza olmaydi va u qidiruv yoki suhbatlar ro‘yxatida ko‘rinmaydi. Istalgan vaqtda Sozlamalarda blokdan chiqarishingiz mumkin.",
+      unblockTitle: "{name} blokdan chiqarilsinmi?",
+      unblockBody:
+        "{name} sizga yana xabar yoza oladi va qidiruvda qayta ko‘rinadi.",
+      deleteMeTitle: "Bu xabar faqat siz uchun o‘chirilsinmi?",
+      deleteMeBody:
+        "Xabar faqat sizning yozishmangizdan yo‘qoladi — {name} da u qoladi.",
+      deleteEveryoneTitle: "Bu xabar hamma uchun o‘chirilsinmi?",
+      deleteEveryoneBody:
+        "Xabar sizda ham, {name} da ham «Xabar o‘chirildi» matniga almashtiriladi. Buni bekor qilib bo‘lmaydi.",
+    },
+    settings: {
+      title: "Sozlamalar",
+      language: "Til",
+      languageHint: "HUM siz bilan gaplashadigan tilni tanlang.",
+      appearance: "Ko‘rinish",
+      appearanceHint: "Tungi yoki kunduzgi rejim orasida almashing.",
+      dark: "Tungi",
+      light: "Kunduzgi",
+      privacy: "Maxfiylik",
+      privacyHint:
+        "Siz bloklagan foydalanuvchilar sizga yoza olmaydi va qidiruvda ko‘rinmaydi.",
+      blockedUsersEmpty: "Siz hech kimni bloklamagansiz.",
+      account: "Akkount",
+      accountHint: "Siz {username} sifatida kirdingiz.",
+    },
+    toast: {
+      loggedIn: "Xush kelibsiz, {name}.",
+      accountCreated: "Akkount yaratildi. Xush kelibsiz, {name}!",
+      loggedOut: "Tizimdan chiqdingiz.",
+      profileSaved: "Profil yangilandi.",
+      langChanged: "Til o‘zgartirildi.",
+      chatRemoved: "Suhbat olib tashlandi.",
+      userBlocked: "{name} bloklandi.",
+      userUnblocked: "{name} blokdan chiqarildi.",
+      messageDeletedForMe: "Xabar siz uchun oʻchirildi.",
+      messageDeletedEveryone: "Xabar oʻchirildi.",
+    },
+  },
 };
 
-let currentLang = getItem(KEYS.LANG, 'en');
-if(!translations[currentLang]) currentLang = 'en';
+let currentLang = getItem(KEYS.LANG, "en");
+if (!translations[currentLang]) currentLang = "en";
 
-function getLang(){ return currentLang; }
+function getLang() {
+  return currentLang;
+}
 
-function setLang(lang){
-  if(!translations[lang]) return;
+function setLang(lang) {
+  if (!translations[lang]) return;
   currentLang = lang;
   setItem(KEYS.LANG, lang);
   applyTranslations();
 }
 
-function resolve(path, lang){
-  const parts = path.split('.');
+function resolve(path, lang) {
+  const parts = path.split(".");
   let node = translations[lang];
-  for(const p of parts){
-    if(node == null) return null;
+  for (const p of parts) {
+    if (node == null) return null;
     node = node[p];
   }
-  return typeof node === 'string' ? node : null;
+  return typeof node === "string" ? node : null;
 }
 
-function t(path, vars){
+function t(path, vars) {
   let str = resolve(path, currentLang);
-  if(str == null) str = resolve(path, 'en');
-  if(str == null) return path;
-  if(vars){
-    Object.keys(vars).forEach(k=>{
-      str = str.replace(new RegExp(`{${k}}`,'g'), vars[k]);
+  if (str == null) str = resolve(path, "en");
+  if (str == null) return path;
+  if (vars) {
+    Object.keys(vars).forEach((k) => {
+      str = str.replace(new RegExp(`{${k}}`, "g"), vars[k]);
     });
   }
   return str;
 }
 
-function applyTranslations(root = document){
-  root.querySelectorAll('[data-i18n]').forEach(el=>{
-    el.textContent = t(el.getAttribute('data-i18n'));
+function applyTranslations(root = document) {
+  root.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.getAttribute("data-i18n"));
   });
-  root.querySelectorAll('[data-i18n-placeholder]').forEach(el=>{
-    el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder')));
+  root.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
   });
-  root.querySelectorAll('[data-i18n-title]').forEach(el=>{
-    el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
+  root.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
   });
   document.documentElement.lang = currentLang;
-  document.querySelectorAll('.lang-pill, .lang-option').forEach(el=>{
-    el.classList.toggle('is-active', el.getAttribute('data-lang') === currentLang);
+  document.querySelectorAll(".lang-pill, .lang-option").forEach((el) => {
+    el.classList.toggle(
+      "is-active",
+      el.getAttribute("data-lang") === currentLang,
+    );
   });
 }
 /* ===================================================================
@@ -2428,95 +2848,113 @@ function applyTranslations(root = document){
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
-const AVATAR_PALETTE = ['#7c9eff','#f5b942','#4ade80','#ff8b7c','#c792ea','#5ee7d4','#ffa4d8','#8fb8ff'];
+const AVATAR_PALETTE = [
+  "#7c9eff",
+  "#f5b942",
+  "#4ade80",
+  "#ff8b7c",
+  "#c792ea",
+  "#5ee7d4",
+  "#ffa4d8",
+  "#8fb8ff",
+];
 
-function colorForUsername(username){
+function colorForUsername(username) {
   let sum = 0;
-  for(let i=0;i<username.length;i++) sum += username.charCodeAt(i);
+  for (let i = 0; i < username.length; i++) sum += username.charCodeAt(i);
   return AVATAR_PALETTE[sum % AVATAR_PALETTE.length];
 }
 
-function initialsFor(displayName){
-  if(!displayName) return '?';
-  const parts = displayName.trim().split(/\s+/).slice(0,2);
-  return parts.map(p=>p[0]).join('').toUpperCase();
+function initialsFor(displayName) {
+  if (!displayName) return "?";
+  const parts = displayName.trim().split(/\s+/).slice(0, 2);
+  return parts
+    .map((p) => p[0])
+    .join("")
+    .toUpperCase();
 }
 
 // avatar: { type:'upload', data:<dataURL> } | { type:'generated' }
 // Builds/updates an <img> + <span> pair inside `el` so uploaded photos are
 // always clipped with object-fit:cover and initials never overflow the circle.
-function applyAvatar(el, user){
-  let img = el.querySelector('.avatar__img');
-  let span = el.querySelector('.avatar__initials');
-  if(!img){
-    img = document.createElement('img');
-    img.className = 'avatar__img';
-    img.alt = '';
+function applyAvatar(el, user) {
+  let img = el.querySelector(".avatar__img");
+  let span = el.querySelector(".avatar__initials");
+  if (!img) {
+    img = document.createElement("img");
+    img.className = "avatar__img";
+    img.alt = "";
     img.hidden = true;
     el.appendChild(img);
   }
-  if(!span){
-    span = document.createElement('span');
-    span.className = 'avatar__initials';
+  if (!span) {
+    span = document.createElement("span");
+    span.className = "avatar__initials";
     el.appendChild(span);
   }
-  if(user.avatar && user.avatar.type === 'upload' && user.avatar.data){
+  if (user.avatar && user.avatar.type === "upload" && user.avatar.data) {
     img.src = user.avatar.data;
     img.hidden = false;
     span.hidden = true;
-    el.style.background = 'transparent';
-  }else{
+    el.style.background = "transparent";
+  } else {
     img.hidden = true;
-    img.removeAttribute('src');
+    img.removeAttribute("src");
     span.hidden = false;
     span.textContent = initialsFor(user.displayName);
     el.style.background = colorForUsername(user.username);
   }
 }
 
-function debounce(fn, wait = 200){
+function debounce(fn, wait = 200) {
   let t;
-  return (...args)=>{
+  return (...args) => {
     clearTimeout(t);
-    t = setTimeout(()=>fn(...args), wait);
+    t = setTimeout(() => fn(...args), wait);
   };
 }
 
-function escapeHtml(str){
+function escapeHtml(str) {
   return String(str)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-function showToast(message, type = 'default'){
-  const host = document.getElementById('toastHost');
-  if(!host) return;
-  const el = document.createElement('div');
-  el.className = 'toast' + (type !== 'default' ? ` toast--${type}` : '');
+function showToast(message, type = "default") {
+  const host = document.getElementById("toastHost");
+  if (!host) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (type !== "default" ? ` toast--${type}` : "");
   el.textContent = message;
   host.appendChild(el);
-  setTimeout(()=>{
-    el.style.transition = 'opacity .25s ease, transform .25s ease';
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(-6px)';
-    setTimeout(()=>el.remove(), 260);
+  setTimeout(() => {
+    el.style.transition = "opacity .25s ease, transform .25s ease";
+    el.style.opacity = "0";
+    el.style.transform = "translateY(-6px)";
+    setTimeout(() => el.remove(), 260);
   }, 2600);
 }
 
-function readFileAsDataURL(file){
-  return new Promise((resolve, reject)=>{
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = ()=>resolve(reader.result);
-    reader.onerror = ()=>reject(new Error('read-failed'));
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("read-failed"));
     reader.readAsDataURL(file);
   });
 }
 
-function formatDate(iso, lang){
-  try{
-    const locale = lang === 'ru' ? 'ru-RU' : lang === 'uz' ? 'uz-UZ' : 'en-US';
-    return new Date(iso).toLocaleDateString(locale, { year:'numeric', month:'long' });
-  }catch(e){
+function formatDate(iso, lang) {
+  try {
+    const locale = lang === "ru" ? "ru-RU" : lang === "uz" ? "uz-UZ" : "en-US";
+    return new Date(iso).toLocaleDateString(locale, {
+      year: "numeric",
+      month: "long",
+    });
+  } catch (e) {
     return iso;
   }
 }
@@ -2524,20 +2962,26 @@ function formatDate(iso, lang){
 // Compact timestamp for chat bubbles and the chats list: just the time
 // for messages sent today, otherwise a short date (plus year if it
 // wasn't this year), so it never wraps or crowds the layout.
-function formatCompactTime(iso, lang){
-  try{
-    const locale = lang === 'ru' ? 'ru-RU' : lang === 'uz' ? 'uz-UZ' : 'en-US';
+function formatCompactTime(iso, lang) {
+  try {
+    const locale = lang === "ru" ? "ru-RU" : lang === "uz" ? "uz-UZ" : "en-US";
     const date = new Date(iso);
     const now = new Date();
-    if(date.toDateString() === now.toDateString()){
-      return date.toLocaleTimeString(locale, { hour:'2-digit', minute:'2-digit' });
+    if (date.toDateString() === now.toDateString()) {
+      return date.toLocaleTimeString(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     }
     const sameYear = date.getFullYear() === now.getFullYear();
-    return date.toLocaleDateString(locale, sameYear
-      ? { day:'numeric', month:'short' }
-      : { day:'numeric', month:'short', year:'numeric' });
-  }catch(e){
-    return '';
+    return date.toLocaleDateString(
+      locale,
+      sameYear
+        ? { day: "numeric", month: "short" }
+        : { day: "numeric", month: "short", year: "numeric" },
+    );
+  } catch (e) {
+    return "";
   }
 }
 /* ===================================================================
@@ -2546,17 +2990,22 @@ function formatCompactTime(iso, lang){
    to change when this becomes a real backend-backed auth system.
 =================================================================== */
 
-function validateRegistration({ displayName, username, password, confirmPassword }){
+function validateRegistration({
+  displayName,
+  username,
+  password,
+  confirmPassword,
+}) {
   const errors = {};
 
-  if(!displayName || !displayName.trim()){
-    errors.displayName = t('auth.validation.displayNameShort');
+  if (!displayName || !displayName.trim()) {
+    errors.displayName = t("auth.validation.displayNameShort");
   }
 
-  if(!username || !username.trim()){
-    errors.username = t('auth.validation.required');
-  }else if(!USERNAME_RE.test(username.trim())){
-    errors.username = t('auth.validation.usernameFormat');
+  if (!username || !username.trim()) {
+    errors.username = t("auth.validation.required");
+  } else if (!USERNAME_RE.test(username.trim())) {
+    errors.username = t("auth.validation.usernameFormat");
   }
   // Uniqueness is enforced by Firebase Auth itself (each username maps
   // to a unique synthetic email) — see registerUser()'s catch below —
@@ -2564,39 +3013,51 @@ function validateRegistration({ displayName, username, password, confirmPassword
   // "check it's free" and "claim it" on two devices registering the
   // same name at once.
 
-  if(!password){
-    errors.password = t('auth.validation.required');
-  }else if(password.length < 6){
-    errors.password = t('auth.validation.passwordShort');
+  if (!password) {
+    errors.password = t("auth.validation.required");
+  } else if (password.length < 6) {
+    errors.password = t("auth.validation.passwordShort");
   }
 
-  if(!confirmPassword){
-    errors.confirmPassword = t('auth.validation.required');
-  }else if(password !== confirmPassword){
-    errors.confirmPassword = t('auth.validation.passwordMismatch');
+  if (!confirmPassword) {
+    errors.confirmPassword = t("auth.validation.required");
+  } else if (password !== confirmPassword) {
+    errors.confirmPassword = t("auth.validation.passwordMismatch");
   }
 
   return errors;
 }
 
-async function registerUser({ displayName, username, password, bio, avatar }){
+async function registerUser({ displayName, username, password, bio, avatar }) {
   requireFirebaseConfig();
-  const errors = validateRegistration({ displayName, username, password, confirmPassword: password });
-  if(Object.keys(errors).length){
-    return { ok:false, errors };
+  const errors = validateRegistration({
+    displayName,
+    username,
+    password,
+    confirmPassword: password,
+  });
+  if (Object.keys(errors).length) {
+    return { ok: false, errors };
   }
 
   const uname = username.trim();
   const lower = usernameDocId(uname);
 
   let credential;
-  try{
-    credential = await createUserWithEmailAndPassword(auth, emailForUsername(lower), password);
-  }catch(e){
-    if(e.code === 'auth/email-already-in-use'){
-      return { ok:false, errors:{ username: t('auth.validation.usernameTaken') } };
+  try {
+    credential = await createUserWithEmailAndPassword(
+      auth,
+      emailForUsername(lower),
+      password,
+    );
+  } catch (e) {
+    if (e.code === "auth/email-already-in-use") {
+      return {
+        ok: false,
+        errors: { username: t("auth.validation.usernameTaken") },
+      };
     }
-    return { ok:false, errors:{ form: t('errors.network') } };
+    return { ok: false, errors: { form: t("errors.network") } };
   }
 
   const user = {
@@ -2605,52 +3066,61 @@ async function registerUser({ displayName, username, password, bio, avatar }){
     usernameLower: lower,
     displayName: displayName.trim(),
     displayNameLower: displayName.trim().toLowerCase(),
-    bio: (bio || '').trim(),
-    avatar: avatar || { type:'generated' },
-    createdAt: new Date().toISOString()
+    bio: (bio || "").trim(),
+    avatar: avatar || { type: "generated" },
+    createdAt: new Date().toISOString(),
   };
 
-  try{
-    await setDoc(doc(db, 'users', credential.user.uid), user);
-  }catch(e){
-    return { ok:false, errors:{ form: t('errors.network') } };
+  try {
+    await setDoc(doc(db, "users", credential.user.uid), user);
+  } catch (e) {
+    return { ok: false, errors: { form: t("errors.network") } };
   }
 
   state.me = user;
-  return { ok:true, user };
+  return { ok: true, user };
 }
 
-async function loginUser({ username, password }){
+async function loginUser({ username, password }) {
   requireFirebaseConfig();
-  if(!username || !password){
-    return { ok:false, error: t('auth.validation.required') };
+  if (!username || !password) {
+    return { ok: false, error: t("auth.validation.required") };
   }
   let credential;
-  try{
-    credential = await signInWithEmailAndPassword(auth, emailForUsername(username), password);
-  }catch(e){
-    if(e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found' || e.code === 'auth/invalid-email'){
-      return { ok:false, error: t('auth.login.errorInvalid') };
+  try {
+    credential = await signInWithEmailAndPassword(
+      auth,
+      emailForUsername(username),
+      password,
+    );
+  } catch (e) {
+    if (
+      e.code === "auth/invalid-credential" ||
+      e.code === "auth/wrong-password" ||
+      e.code === "auth/user-not-found" ||
+      e.code === "auth/invalid-email"
+    ) {
+      return { ok: false, error: t("auth.login.errorInvalid") };
     }
-    return { ok:false, error: t('errors.network') };
+    return { ok: false, error: t("errors.network") };
   }
   let user;
-  try{
+  try {
     // Loads by UID (with automatic migration/recovery if needed) rather
     // than trusting the username just typed into the form — that's what
     // makes this resilient to the exact "Auth exists, profile doesn't"
     // failure mode instead of just failing the same way again.
     user = await loadOrRecoverProfile(credential.user);
-  }catch(e){
-    console.error('HUM: failed to load/recover profile after login', e);
+  } catch (e) {
+    console.error("HUM: failed to load/recover profile after login", e);
     await signOut(auth).catch(() => {});
-    return { ok:false, error: t('errors.network') };
+    return { ok: false, error: t("errors.network") };
   }
   state.me = user;
-  return { ok:true, user };
+  return { ok: true, user };
 }
 
-async function logoutUser(){
+async function logoutUser() {
   requireFirebaseConfig();
   // Mark presence offline, and clear any "I'm typing" flag, BEFORE
   // signing out (and before stopAllConversationWatchers, which is what
@@ -2659,7 +3129,7 @@ async function logoutUser(){
   // token, and the Realtime Database rules require a still-valid
   // auth.uid to allow writing presence/{uid} or typing/{convId}/{uid},
   // so both have to happen while still signed in.
-  if(state.me){
+  if (state.me) {
     await goOfflineNow(state.me.uid);
     await stopMyTyping();
   }
@@ -2678,30 +3148,32 @@ async function logoutUser(){
   state.me = null;
 }
 
-async function updateProfile(updates){
+async function updateProfile(updates) {
   requireFirebaseConfig();
   const user = state.me;
-  if(!user) return { ok:false, errors:{ form: t('auth.login.errorInvalid') } };
+  if (!user)
+    return { ok: false, errors: { form: t("auth.login.errorInvalid") } };
 
   const errors = {};
-  const nextDisplayName = (updates.displayName || '').trim();
-  const nextUsername = (updates.username || '').trim();
+  const nextDisplayName = (updates.displayName || "").trim();
+  const nextUsername = (updates.username || "").trim();
 
-  if(!nextDisplayName){
-    errors.displayName = t('auth.validation.displayNameShort');
+  if (!nextDisplayName) {
+    errors.displayName = t("auth.validation.displayNameShort");
   }
 
-  if(!nextUsername){
-    errors.username = t('auth.validation.required');
-  }else if(!USERNAME_RE.test(nextUsername)){
-    errors.username = t('auth.validation.usernameFormat');
+  if (!nextUsername) {
+    errors.username = t("auth.validation.required");
+  } else if (!USERNAME_RE.test(nextUsername)) {
+    errors.username = t("auth.validation.usernameFormat");
   }
 
-  if(Object.keys(errors).length){
-    return { ok:false, errors };
+  if (Object.keys(errors).length) {
+    return { ok: false, errors };
   }
 
-  const usernameChanged = usernameDocId(nextUsername) !== usernameDocId(user.username);
+  const usernameChanged =
+    usernameDocId(nextUsername) !== usernameDocId(user.username);
   const nextLower = usernameDocId(nextUsername);
 
   // Changing the username means changing the Firebase Auth email it
@@ -2711,17 +3183,20 @@ async function updateProfile(updates){
   // here. It can also ask for a fresh login (auth/requires-recent-login)
   // if the session is old, which is surfaced as a plain form error
   // rather than a crash.
-  if(usernameChanged){
-    try{
+  if (usernameChanged) {
+    try {
       await updateEmail(auth.currentUser, emailForUsername(nextLower));
-    }catch(e){
-      if(e.code === 'auth/email-already-in-use'){
-        return { ok:false, errors:{ username: t('auth.validation.usernameTaken') } };
+    } catch (e) {
+      if (e.code === "auth/email-already-in-use") {
+        return {
+          ok: false,
+          errors: { username: t("auth.validation.usernameTaken") },
+        };
       }
-      if(e.code === 'auth/requires-recent-login'){
-        return { ok:false, errors:{ form: t('errors.requiresRecentLogin') } };
+      if (e.code === "auth/requires-recent-login") {
+        return { ok: false, errors: { form: t("errors.requiresRecentLogin") } };
       }
-      return { ok:false, errors:{ form: t('errors.network') } };
+      return { ok: false, errors: { form: t("errors.network") } };
     }
   }
 
@@ -2731,24 +3206,24 @@ async function updateProfile(updates){
     displayNameLower: nextDisplayName.toLowerCase(),
     username: nextUsername,
     usernameLower: nextLower,
-    bio: (updates.bio || '').trim(),
-    avatar: updates.avatar !== undefined ? updates.avatar : user.avatar
+    bio: (updates.bio || "").trim(),
+    avatar: updates.avatar !== undefined ? updates.avatar : user.avatar,
   };
 
-  try{
+  try {
     // The profile document lives at users/{uid}, and uid never changes,
     // so a username change is now just an ordinary field update on the
     // same document — no more deleting one document and creating
     // another under a different ID, which used to be the exact kind of
     // operation that could leave an account's profile missing if it
     // failed partway through.
-    await setDoc(doc(db, 'users', user.uid), updatedUser);
-  }catch(e){
-    return { ok:false, errors:{ form: t('errors.network') } };
+    await setDoc(doc(db, "users", user.uid), updatedUser);
+  } catch (e) {
+    return { ok: false, errors: { form: t("errors.network") } };
   }
 
   state.me = updatedUser;
-  return { ok:true, user: updatedUser, usernameChanged };
+  return { ok: true, user: updatedUser, usernameChanged };
 }
 
 // Firestore has no built-in "contains" text search, so this does two
@@ -2758,31 +3233,51 @@ async function updateProfile(updates){
 // @handle) without needing a separate search service. Throws on
 // network failure so callers can show a real error state instead of
 // silently showing zero results.
-async function searchUsers(searchQuery, excludeUsernameLower){
+async function searchUsers(searchQuery, excludeUsernameLower) {
   requireFirebaseConfig();
-  const q = (searchQuery || '').trim().toLowerCase();
-  const usersCol = collection(db, 'users');
+  const q = (searchQuery || "").trim().toLowerCase();
+  const usersCol = collection(db, "users");
   let rows = [];
 
-  if(!q){
+  if (!q) {
     // Blank query: browse everyone, like the old "list all local
     // users" default did, capped to a reasonable page size.
-    const snap = await getDocs(fbQuery(usersCol, orderBy('displayNameLower'), limit(40)));
-    rows = snap.docs.map(d => d.data());
-  }else{
-    const upperBound = q + '\uf8ff';
+    const snap = await getDocs(
+      fbQuery(usersCol, orderBy("displayNameLower"), limit(40)),
+    );
+    rows = snap.docs.map((d) => d.data());
+  } else {
+    const upperBound = q + "\uf8ff";
     const [byUsername, byDisplayName] = await Promise.all([
-      getDocs(fbQuery(usersCol, orderBy('usernameLower'), where('usernameLower','>=',q), where('usernameLower','<=',upperBound), limit(20))),
-      getDocs(fbQuery(usersCol, orderBy('displayNameLower'), where('displayNameLower','>=',q), where('displayNameLower','<=',upperBound), limit(20))),
+      getDocs(
+        fbQuery(
+          usersCol,
+          orderBy("usernameLower"),
+          where("usernameLower", ">=", q),
+          where("usernameLower", "<=", upperBound),
+          limit(20),
+        ),
+      ),
+      getDocs(
+        fbQuery(
+          usersCol,
+          orderBy("displayNameLower"),
+          where("displayNameLower", ">=", q),
+          where("displayNameLower", "<=", upperBound),
+          limit(20),
+        ),
+      ),
     ]);
     const seen = new Map();
-    [...byUsername.docs, ...byDisplayName.docs].forEach(d => seen.set(d.id, d.data()));
+    [...byUsername.docs, ...byDisplayName.docs].forEach((d) =>
+      seen.set(d.id, d.data()),
+    );
     rows = Array.from(seen.values());
   }
 
   return rows
-    .filter(u => u.usernameLower !== (excludeUsernameLower || ''))
-    .sort((a,b)=> a.displayName.localeCompare(b.displayName))
+    .filter((u) => u.usernameLower !== (excludeUsernameLower || ""))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
     .slice(0, 30);
 }
 
@@ -2790,105 +3285,123 @@ async function searchUsers(searchQuery, excludeUsernameLower){
    SECTION: RENDERING HELPERS (DOM building for dynamic content)
 =================================================================== */
 
-function avatarMarkup(user){
-  if(user.avatar && user.avatar.type === 'upload' && user.avatar.data){
+function avatarMarkup(user) {
+  if (user.avatar && user.avatar.type === "upload" && user.avatar.data) {
     return `<img class="avatar__img" src="${user.avatar.data}" alt="">`;
   }
   return `<span class="avatar__initials">${escapeHtml(initialsFor(user.displayName))}</span>`;
 }
-function avatarBg(user){
-  if(user.avatar && user.avatar.type === 'upload' && user.avatar.data) return 'transparent';
+function avatarBg(user) {
+  if (user.avatar && user.avatar.type === "upload" && user.avatar.data)
+    return "transparent";
   return colorForUsername(user.username);
 }
 
-function renderPeopleResults(container, users, { query, selectedUsername, loading, error }){
-  if(loading){
-    container.innerHTML = `<div class="people-results__hint">${escapeHtml(t('common.loading'))}</div>`;
-    clearPresenceWatchers('peopleResults');
+function renderPeopleResults(
+  container,
+  users,
+  { query, selectedUsername, loading, error },
+) {
+  if (loading) {
+    container.innerHTML = `<div class="people-results__hint">${escapeHtml(t("common.loading"))}</div>`;
+    clearPresenceWatchers("peopleResults");
     return;
   }
-  if(error){
-    container.innerHTML = `<div class="people-results__empty">${escapeHtml(t('errors.network'))}</div>`;
-    clearPresenceWatchers('peopleResults');
+  if (error) {
+    container.innerHTML = `<div class="people-results__empty">${escapeHtml(t("errors.network"))}</div>`;
+    clearPresenceWatchers("peopleResults");
     return;
   }
-  if(!users.length){
+  if (!users.length) {
     container.innerHTML = `
-      <div class="people-results__empty">${query ? escapeHtml(t('people.empty')) : escapeHtml(t('people.hint'))}</div>
+      <div class="people-results__empty">${query ? escapeHtml(t("people.empty")) : escapeHtml(t("people.hint"))}</div>
     `;
-    clearPresenceWatchers('peopleResults');
+    clearPresenceWatchers("peopleResults");
     return;
   }
 
-  container.innerHTML = users.map(u => `
-    <div class="result-row${selectedUsername === u.username ? ' is-active' : ''}" data-username="${escapeHtml(u.username)}" role="button" tabindex="0">
+  container.innerHTML = users
+    .map(
+      (u) => `
+    <div class="result-row${selectedUsername === u.username ? " is-active" : ""}" data-username="${escapeHtml(u.username)}" role="button" tabindex="0">
       <div class="avatar" data-presence-uid="${escapeHtml(u.uid)}" style="background:${avatarBg(u)}">${avatarMarkup(u)}</div>
       <div class="result-row__info">
         <div class="result-row__name">${escapeHtml(u.displayName)}</div>
         <div class="result-row__handle">@${escapeHtml(u.username)}</div>
       </div>
-      <button type="button" class="btn btn--ghost btn--small" data-username="${escapeHtml(u.username)}" data-action="view">${escapeHtml(t('people.view'))}</button>
+      <button type="button" class="btn btn--ghost btn--small" data-username="${escapeHtml(u.username)}" data-action="view">${escapeHtml(t("people.view"))}</button>
     </div>
-  `).join('');
-  clearPresenceWatchers('peopleResults');
-  users.forEach(u => watchPresenceForScope('peopleResults', u.uid, container));
+  `,
+    )
+    .join("");
+  clearPresenceWatchers("peopleResults");
+  users.forEach((u) =>
+    watchPresenceForScope("peopleResults", u.uid, container),
+  );
 }
 
-function renderProfileHero(container, user, isSelf){
+function renderProfileHero(container, user, isSelf) {
   const joined = formatDate(user.createdAt, getLang());
   container.innerHTML = `
     <div class="profile-hero">
       <div class="avatar" data-presence-uid="${escapeHtml(user.uid)}" style="width:100px;height:100px;font-size:34px;background:${avatarBg(user)}">${avatarMarkup(user)}</div>
-      <h2 class="profile-hero__name">${escapeHtml(user.displayName)}${isSelf ? ` <span style="color:var(--text-faint);font-weight:500;font-size:15px;">(${escapeHtml(t('people.you'))})</span>` : ''}</h2>
+      <h2 class="profile-hero__name">${escapeHtml(user.displayName)}${isSelf ? ` <span style="color:var(--text-faint);font-weight:500;font-size:15px;">(${escapeHtml(t("people.you"))})</span>` : ""}</h2>
       <div class="profile-hero__handle">@${escapeHtml(user.username)}</div>
-      <p class="profile-hero__bio">${user.bio ? escapeHtml(user.bio) : `<em style="color:var(--text-faint)">${escapeHtml(t('profile.noBio'))}</em>`}</p>
-      ${!isSelf ? `
+      <p class="profile-hero__bio">${user.bio ? escapeHtml(user.bio) : `<em style="color:var(--text-faint)">${escapeHtml(t("profile.noBio"))}</em>`}</p>
+      ${
+        !isSelf
+          ? `
         <div class="profile-hero__actions">
-          <button type="button" class="btn btn--primary btn--small" id="btnMessageUser">${escapeHtml(t('profile.message'))}</button>
-          <button type="button" class="icon-btn" id="btnProfileMenu" data-i18n-title="common.moreOptions" title="${escapeHtml(t('common.moreOptions'))}" aria-haspopup="true" aria-expanded="false">
+          <button type="button" class="btn btn--primary btn--small" id="btnMessageUser">${escapeHtml(t("profile.message"))}</button>
+          <button type="button" class="icon-btn" id="btnProfileMenu" data-i18n-title="common.moreOptions" title="${escapeHtml(t("common.moreOptions"))}" aria-haspopup="true" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>
           </button>
         </div>
-      ` : ''}
+      `
+          : ""
+      }
     </div>
     <div class="profile-meta">
-      <div class="profile-meta__row"><span>${escapeHtml(t('common.username'))}</span><span>@${escapeHtml(user.username)}</span></div>
-      <div class="profile-meta__row"><span>${escapeHtml(t('profile.joined'))}</span><span>${escapeHtml(joined)}</span></div>
+      <div class="profile-meta__row"><span>${escapeHtml(t("common.username"))}</span><span>@${escapeHtml(user.username)}</span></div>
+      <div class="profile-meta__row"><span>${escapeHtml(t("profile.joined"))}</span><span>${escapeHtml(joined)}</span></div>
     </div>
   `;
   // Own profile never shows a presence dot (there's nothing informative
   // about telling yourself you're online) — only subscribe for others.
-  clearPresenceWatchers('profileView');
-  if(!isSelf && user.uid){
-    watchPresenceForScope('profileView', user.uid, container);
+  clearPresenceWatchers("profileView");
+  if (!isSelf && user.uid) {
+    watchPresenceForScope("profileView", user.uid, container);
   }
 }
 
-function renderProfileSummary(container, user){
+function renderProfileSummary(container, user) {
   container.innerHTML = `
     <div class="profile-hero" style="padding:0 0 26px;text-align:left;align-items:flex-start;border-bottom:1px solid var(--border);margin-bottom:22px;">
       <div class="avatar" style="width:84px;height:84px;font-size:28px;margin-bottom:14px;background:${avatarBg(user)}">${avatarMarkup(user)}</div>
       <h2 class="profile-hero__name" style="font-size:21px;">${escapeHtml(user.displayName)}</h2>
       <div class="profile-hero__handle">@${escapeHtml(user.username)}</div>
-      <p class="profile-hero__bio" style="margin-top:12px;">${user.bio ? escapeHtml(user.bio) : `<em style="color:var(--text-faint)">${escapeHtml(t('profile.noBio'))}</em>`}</p>
+      <p class="profile-hero__bio" style="margin-top:12px;">${user.bio ? escapeHtml(user.bio) : `<em style="color:var(--text-faint)">${escapeHtml(t("profile.noBio"))}</em>`}</p>
     </div>
   `;
 }
-function renderChatsListRow(user, otherUid, lastMessage, meUid){
+function renderChatsListRow(user, otherUid, lastMessage, meUid) {
   const isOwn = lastMessage.from === meUid;
-  const prefix = isOwn ? t('chat.youPrefix') : '';
+  const prefix = isOwn ? t("chat.youPrefix") : "";
   // A voice/image/file message's `text` is always '' (see addMessage/
   // sendVoiceMessage/sendOneAttachment) — show a translated label
   // instead of a blank preview rather than teaching this row about
   // every message type's own fields.
-  const bodyText = lastMessage.type === 'voice'
-    ? t('chat.voice.listPreview')
-    : lastMessage.type === 'image'
-      ? t('chat.attach.listPreviewPhoto')
-      : lastMessage.type === 'file'
-        ? t('chat.attach.listPreviewFile', { name: lastMessage.fileName || '' })
-        : lastMessage.text;
-  const previewText = (prefix + bodyText).replace(/\s+/g, ' ').trim();
+  const bodyText =
+    lastMessage.type === "voice"
+      ? t("chat.voice.listPreview")
+      : lastMessage.type === "image"
+        ? t("chat.attach.listPreviewPhoto")
+        : lastMessage.type === "file"
+          ? t("chat.attach.listPreviewFile", {
+              name: lastMessage.fileName || "",
+            })
+          : lastMessage.text;
+  const previewText = (prefix + bodyText).replace(/\s+/g, " ").trim();
   return `
     <div class="result-row" data-username="${escapeHtml(user.username)}" role="button" tabindex="0">
       <div class="avatar" data-presence-uid="${escapeHtml(otherUid)}" style="background:${avatarBg(user)}">${avatarMarkup(user)}</div>
@@ -2904,15 +3417,15 @@ function renderChatsListRow(user, otherUid, lastMessage, meUid){
 // Same empty-state markup that used to be static in index.html for the
 // Chats panel, now rendered on demand so the panel can switch between
 // this and the real conversation list as messages come and go.
-function chatsEmptyStateMarkup(){
+function chatsEmptyStateMarkup() {
   return `
     <div class="empty-state">
       <svg viewBox="0 0 120 90" class="empty-state__art">
         <path d="M10 60c6-30 12 30 20 0s12-45 20 0 12 45 20 0 12-30 20 0 12 30 18 0"/>
       </svg>
-      <h3>${escapeHtml(t('chats.emptyTitle'))}</h3>
-      <p>${escapeHtml(t('chats.emptyBody'))}</p>
-      <button type="button" class="btn btn--primary btn--small" id="emptyToPeople">${escapeHtml(t('chats.emptyAction'))}</button>
+      <h3>${escapeHtml(t("chats.emptyTitle"))}</h3>
+      <p>${escapeHtml(t("chats.emptyBody"))}</p>
+      <button type="button" class="btn btn--primary btn--small" id="emptyToPeople">${escapeHtml(t("chats.emptyAction"))}</button>
     </div>
   `;
 }
@@ -2923,52 +3436,62 @@ function chatsEmptyStateMarkup(){
 // listener keeps current for as long as the person is logged in. That
 // listener is what makes a message someone just received on another
 // device show up here without needing to refresh or reopen the tab.
-function renderChatsList(){
-  if(!els.chatsListContainer) return;
+function renderChatsList() {
+  if (!els.chatsListContainer) return;
   const me = currentUser();
-  if(!me){
-    els.chatsListContainer.innerHTML = '';
-    clearPresenceWatchers('chatsList');
+  if (!me) {
+    els.chatsListContainer.innerHTML = "";
+    clearPresenceWatchers("chatsList");
     return;
   }
-  if(state.chatsListError){
+  if (state.chatsListError) {
     els.chatsListContainer.innerHTML = `
       <div class="people-results__empty">
-        ${escapeHtml(t('errors.network'))}
+        ${escapeHtml(t("errors.network"))}
       </div>
     `;
-    clearPresenceWatchers('chatsList');
+    clearPresenceWatchers("chatsList");
     return;
   }
-  if(state.chatsListLoading){
-    els.chatsListContainer.innerHTML = `<div class="people-results__hint">${escapeHtml(t('common.loading'))}</div>`;
-    clearPresenceWatchers('chatsList');
+  if (state.chatsListLoading) {
+    els.chatsListContainer.innerHTML = `<div class="people-results__hint">${escapeHtml(t("common.loading"))}</div>`;
+    clearPresenceWatchers("chatsList");
     return;
   }
-  const rows = (state.chatsListRows || []).filter((row) => !state.myBlockedUids.has(row.otherUid));
-  if(!rows.length){
+  const rows = (state.chatsListRows || []).filter(
+    (row) => !state.myBlockedUids.has(row.otherUid),
+  );
+  if (!rows.length) {
     els.chatsListContainer.innerHTML = chatsEmptyStateMarkup();
-    clearPresenceWatchers('chatsList');
+    clearPresenceWatchers("chatsList");
     return;
   }
   els.chatsListContainer.innerHTML = rows
-    .map(({ other, otherUid, lastMessage }) => renderChatsListRow(other, otherUid, lastMessage, me.uid))
-    .join('');
-  clearPresenceWatchers('chatsList');
-  rows.forEach(({ otherUid }) => watchPresenceForScope('chatsList', otherUid, els.chatsListContainer));
+    .map(({ other, otherUid, lastMessage }) =>
+      renderChatsListRow(other, otherUid, lastMessage, me.uid),
+    )
+    .join("");
+  clearPresenceWatchers("chatsList");
+  rows.forEach(({ otherUid }) =>
+    watchPresenceForScope("chatsList", otherUid, els.chatsListContainer),
+  );
 }
 
-function renderChatHeader(user){
-  if(!els.chatHeaderAvatar) return;
+function renderChatHeader(user) {
+  if (!els.chatHeaderAvatar) return;
   els.chatHeaderAvatar.style.background = avatarBg(user);
   els.chatHeaderAvatar.innerHTML = avatarMarkup(user);
-  els.chatHeaderAvatar.classList.remove('avatar--online'); // reset; watchPresenceForScope below sets it live
-  els.chatHeaderAvatar.setAttribute('data-presence-uid', user.uid || '');
+  els.chatHeaderAvatar.classList.remove("avatar--online"); // reset; watchPresenceForScope below sets it live
+  els.chatHeaderAvatar.setAttribute("data-presence-uid", user.uid || "");
   els.chatHeaderName.textContent = user.displayName;
-  els.chatHeaderHandle.textContent = '@' + user.username;
-  clearPresenceWatchers('chatHeader');
-  if(user.uid){
-    watchPresenceForScope('chatHeader', user.uid, els.chatHeaderInfo || document);
+  els.chatHeaderHandle.textContent = "@" + user.username;
+  clearPresenceWatchers("chatHeader");
+  if (user.uid) {
+    watchPresenceForScope(
+      "chatHeader",
+      user.uid,
+      els.chatHeaderInfo || document,
+    );
   }
 }
 
@@ -2978,19 +3501,19 @@ function renderChatHeader(user){
 // state.chatMessagesError / state.chatMessagesLoading — rather than
 // fetching on its own, so a reply that arrives from the other person's
 // device appears immediately.
-function renderChatMessages(){
-  if(!els.chatMessages) return;
+function renderChatMessages() {
+  if (!els.chatMessages) return;
   const me = currentUser();
-  if(!me || !state.activeChatUsername){
-    els.chatMessages.innerHTML = '';
+  if (!me || !state.activeChatUsername) {
+    els.chatMessages.innerHTML = "";
     return;
   }
-  if(state.chatMessagesError){
-    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('errors.network'))}</div>`;
+  if (state.chatMessagesError) {
+    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t("errors.network"))}</div>`;
     return;
   }
-  if(state.chatMessagesLoading){
-    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('common.loading'))}</div>`;
+  if (state.chatMessagesLoading) {
+    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t("common.loading"))}</div>`;
     return;
   }
   // "Delete for me" (see deleteMessageForMe/confirmAndDeleteMessage)
@@ -3002,8 +3525,8 @@ function renderChatMessages(){
   const messages = (state.chatMessagesData || []).filter(
     (m) => !(Array.isArray(m.deletedFor) && m.deletedFor.includes(me.uid)),
   );
-  if(!messages.length){
-    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t('chat.emptyTitle'))}</div>`;
+  if (!messages.length) {
+    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t("chat.emptyTitle"))}</div>`;
     return;
   }
   els.chatMessages.innerHTML = messages
@@ -3017,20 +3540,20 @@ function renderChatMessages(){
       // treated the same as explicitly unread — see markMessagesRead
       // and the readAt schema note at the top of this file.
       const receiptMarkup = isOwn
-        ? `<span class="chat-msg__receipt${m.readAt ? ' chat-msg__receipt--read' : ''}" title="${escapeHtml(t(m.readAt ? 'chat.receiptRead' : 'chat.receiptSent'))}">${m.readAt ? '✓✓' : '✓'}</span>`
-        : '';
+        ? `<span class="chat-msg__receipt${m.readAt ? " chat-msg__receipt--read" : ""}" title="${escapeHtml(t(m.readAt ? "chat.receiptRead" : "chat.receiptSent"))}">${m.readAt ? "✓✓" : "✓"}</span>`
+        : "";
       // A tombstoned message shows "This message was deleted" in place
       // of its original content (text OR voice player OR attachment)
       // for BOTH participants — see deleteMessageForEveryone. The
       // original fields are left alone in Firestore; only rendering
       // hides them.
       const bubbleMarkup = isDeletedForEveryone
-        ? `<div class="chat-msg__bubble chat-msg__bubble--deleted">${escapeHtml(t('chat.messageDeleted'))}</div>`
-        : (m.type === 'voice' && m.voicePath)
+        ? `<div class="chat-msg__bubble chat-msg__bubble--deleted">${escapeHtml(t("chat.messageDeleted"))}</div>`
+        : m.type === "voice" && m.voicePath
           ? voiceMessageBubbleMarkup(m)
-          : (m.type === 'image' && m.filePath)
+          : m.type === "image" && m.filePath
             ? imageMessageBubbleMarkup(m)
-            : (m.type === 'file' && m.filePath)
+            : m.type === "file" && m.filePath
               ? fileMessageBubbleMarkup(m)
               : `<div class="chat-msg__bubble">${escapeHtml(m.text)}</div>`;
       // The delete-action trigger itself — nothing left to delete on an
@@ -3040,18 +3563,18 @@ function renderChatMessages(){
       // els.chatMessages further down, which reuses this same pattern
       // as voice playback's data-voice-id/data-voice-path).
       const menuMarkup = isDeletedForEveryone
-        ? ''
-        : `<button type="button" class="chat-msg__menu-btn" data-msg-menu aria-label="${escapeHtml(t('common.moreOptions'))}">
+        ? ""
+        : `<button type="button" class="chat-msg__menu-btn" data-msg-menu aria-label="${escapeHtml(t("common.moreOptions"))}">
              <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>
            </button>`;
       return `
-        <div class="chat-msg ${isOwn ? 'chat-msg--own' : 'chat-msg--theirs'}" data-msg-id="${escapeHtml(m.id || '')}" data-msg-own="${isOwn}">
+        <div class="chat-msg ${isOwn ? "chat-msg--own" : "chat-msg--theirs"}" data-msg-id="${escapeHtml(m.id || "")}" data-msg-own="${isOwn}">
           ${bubbleMarkup}
           <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}${menuMarkup}</div>
         </div>
       `;
     })
-    .join('');
+    .join("");
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
   // Re-derive playback UI for whatever's now in the DOM — if a voice
   // message was mid-playback when this render fired (e.g. triggered by
@@ -3070,12 +3593,13 @@ function renderChatMessages(){
 // toggleVoicePlayback/syncVoicePlayersUI); playback itself is wired via
 // delegation, not per-node listeners, since this markup is torn down
 // and rebuilt on every renderChatMessages() call.
-function voiceMessageBubbleMarkup(m){
+function voiceMessageBubbleMarkup(m) {
   const duration = Number(m.voiceDuration) || 0;
-  const isActivePlaying = m.id && m.id === activeVoiceMessageId && !sharedVoiceAudio.paused;
+  const isActivePlaying =
+    m.id && m.id === activeVoiceMessageId && !sharedVoiceAudio.paused;
   return `
-    <div class="chat-msg__bubble chat-msg__bubble--voice" data-voice-id="${escapeHtml(m.id || '')}" data-voice-path="${escapeHtml(m.voicePath)}" data-voice-duration="${duration}">
-      <button type="button" class="chat-voice-play${isActivePlaying ? ' is-playing' : ''}" data-voice-play aria-label="${escapeHtml(t(isActivePlaying ? 'chat.voice.pause' : 'chat.voice.play'))}">
+    <div class="chat-msg__bubble chat-msg__bubble--voice" data-voice-id="${escapeHtml(m.id || "")}" data-voice-path="${escapeHtml(m.voicePath)}" data-voice-duration="${duration}">
+      <button type="button" class="chat-voice-play${isActivePlaying ? " is-playing" : ""}" data-voice-play aria-label="${escapeHtml(t(isActivePlaying ? "chat.voice.pause" : "chat.voice.play"))}">
         <svg class="chat-voice-play__icon-play" viewBox="0 0 24 24" width="14" height="14"><path d="M6 4l14 8-14 8V4Z"/></svg>
         <svg class="chat-voice-play__icon-pause" viewBox="0 0 24 24" width="14" height="14"><path d="M6 4h4v16H6V4Zm8 0h4v16h-4V4Z"/></svg>
       </button>
@@ -3101,20 +3625,22 @@ function voiceMessageBubbleMarkup(m){
 const chatFileSignedUrlCache = new Map(); // messageId -> { url, expiresAt }
 const CHAT_FILE_SIGNED_URL_TTL_MS = 55 * 60 * 1000;
 
-function getCachedChatFileUrl(messageId){
+function getCachedChatFileUrl(messageId) {
   const entry = chatFileSignedUrlCache.get(messageId);
-  return (entry && entry.expiresAt > Date.now()) ? entry.url : null;
+  return entry && entry.expiresAt > Date.now() ? entry.url : null;
 }
 
-function formatFileSize(bytes){
+function formatFileSize(bytes) {
   const n = Number(bytes) || 0;
-  if(n < 1024) return `${n} B`;
-  if(n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
-function fileExtensionLabel(fileName){
-  const dot = (fileName || '').lastIndexOf('.');
-  return (dot > 0 && dot < fileName.length - 1) ? fileName.slice(dot + 1).toUpperCase() : '';
+function fileExtensionLabel(fileName) {
+  const dot = (fileName || "").lastIndexOf(".");
+  return dot > 0 && dot < fileName.length - 1
+    ? fileName.slice(dot + 1).toUpperCase()
+    : "";
 }
 
 // Image-attachment bubble. If a still-fresh signed URL is already
@@ -3125,13 +3651,13 @@ function fileExtensionLabel(fileName){
 // hydrateChatFileImages() (called at the end of renderChatMessages)
 // fills in asynchronously. Clicking the image opens the lightbox (see
 // the els.chatMessages click delegation further down).
-function imageMessageBubbleMarkup(m){
+function imageMessageBubbleMarkup(m) {
   const cachedUrl = getCachedChatFileUrl(m.id);
   const inner = cachedUrl
-    ? `<img class="chat-img" src="${escapeHtml(cachedUrl)}" alt="${escapeHtml(t('chat.attach.image'))}" data-file-img loading="lazy" />`
+    ? `<img class="chat-img" src="${escapeHtml(cachedUrl)}" alt="${escapeHtml(t("chat.attach.image"))}" data-file-img loading="lazy" />`
     : `<div class="chat-img chat-img--loading" data-file-img-placeholder></div>`;
   return `
-    <div class="chat-msg__bubble chat-msg__bubble--image" data-file-id="${escapeHtml(m.id || '')}" data-file-path="${escapeHtml(m.filePath)}">
+    <div class="chat-msg__bubble chat-msg__bubble--image" data-file-id="${escapeHtml(m.id || "")}" data-file-path="${escapeHtml(m.filePath)}">
       ${inner}
     </div>
   `;
@@ -3142,16 +3668,16 @@ function imageMessageBubbleMarkup(m){
 // on demand (see the data-file-download click handling further down),
 // not eagerly on render, since a file bubble doesn't need to display
 // its own content inline the way an image does.
-function fileMessageBubbleMarkup(m){
-  const ext = fileExtensionLabel(m.fileName) || '?';
+function fileMessageBubbleMarkup(m) {
+  const ext = fileExtensionLabel(m.fileName) || "?";
   return `
-    <div class="chat-msg__bubble chat-msg__bubble--file" data-file-id="${escapeHtml(m.id || '')}" data-file-path="${escapeHtml(m.filePath)}" data-file-name="${escapeHtml(m.fileName || '')}">
+    <div class="chat-msg__bubble chat-msg__bubble--file" data-file-id="${escapeHtml(m.id || "")}" data-file-path="${escapeHtml(m.filePath)}" data-file-name="${escapeHtml(m.fileName || "")}">
       <div class="chat-file__icon" aria-hidden="true">${escapeHtml(ext)}</div>
       <div class="chat-file__info">
-        <div class="chat-file__name">${escapeHtml(m.fileName || t('chat.attach.fileFallbackName'))}</div>
+        <div class="chat-file__name">${escapeHtml(m.fileName || t("chat.attach.fileFallbackName"))}</div>
         <div class="chat-file__meta">${escapeHtml(formatFileSize(m.fileSize))}</div>
       </div>
-      <button type="button" class="chat-file__download" data-file-download aria-label="${escapeHtml(t('chat.attach.download'))}" title="${escapeHtml(t('chat.attach.download'))}">
+      <button type="button" class="chat-file__download" data-file-download aria-label="${escapeHtml(t("chat.attach.download"))}" title="${escapeHtml(t("chat.attach.download"))}">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
@@ -3165,40 +3691,48 @@ function fileMessageBubbleMarkup(m){
 // syncVoicePlayersUI already uses). data-loading guards against
 // double-fetching the same node if another render fires while a
 // request is still in flight.
-function hydrateChatFileImages(){
-  if(!els.chatMessages) return;
-  els.chatMessages.querySelectorAll('[data-file-img-placeholder]').forEach((placeholder) => {
-    if(placeholder.getAttribute('data-loading') === 'true') return;
-    const bubble = placeholder.closest('.chat-msg__bubble--image');
-    if(!bubble) return;
-    const messageId = bubble.getAttribute('data-file-id');
-    const filePath = bubble.getAttribute('data-file-path');
-    if(!messageId || !filePath) return;
-    placeholder.setAttribute('data-loading', 'true');
-    getChatFileSignedUrl(filePath)
-      .then((url) => {
-        chatFileSignedUrlCache.set(messageId, { url, expiresAt: Date.now() + CHAT_FILE_SIGNED_URL_TTL_MS });
-        if(!els.chatMessages) return;
-        let selector;
-        try {
-          selector = `.chat-msg__bubble--image[data-file-id="${CSS.escape(messageId)}"]`;
-        } catch(e){
-          return;
-        }
-        // Re-query fresh rather than trusting the captured `bubble`
-        // node is still attached — another render may have already
-        // rebuilt the message list while this fetch was in flight.
-        const freshBubble = els.chatMessages.querySelector(selector);
-        if(!freshBubble) return;
-        freshBubble.innerHTML = `<img class="chat-img" src="${escapeHtml(url)}" alt="${escapeHtml(t('chat.attach.image'))}" data-file-img loading="lazy" />`;
-      })
-      .catch((e) => {
-        console.error('HUM: failed to load image attachment', filePath, e);
-        placeholder.removeAttribute('data-loading');
-        placeholder.classList.add('chat-img--error');
-        placeholder.setAttribute('aria-label', t('chat.attach.imageLoadFailed'));
-      });
-  });
+function hydrateChatFileImages() {
+  if (!els.chatMessages) return;
+  els.chatMessages
+    .querySelectorAll("[data-file-img-placeholder]")
+    .forEach((placeholder) => {
+      if (placeholder.getAttribute("data-loading") === "true") return;
+      const bubble = placeholder.closest(".chat-msg__bubble--image");
+      if (!bubble) return;
+      const messageId = bubble.getAttribute("data-file-id");
+      const filePath = bubble.getAttribute("data-file-path");
+      if (!messageId || !filePath) return;
+      placeholder.setAttribute("data-loading", "true");
+      getChatFileSignedUrl(filePath)
+        .then((url) => {
+          chatFileSignedUrlCache.set(messageId, {
+            url,
+            expiresAt: Date.now() + CHAT_FILE_SIGNED_URL_TTL_MS,
+          });
+          if (!els.chatMessages) return;
+          let selector;
+          try {
+            selector = `.chat-msg__bubble--image[data-file-id="${CSS.escape(messageId)}"]`;
+          } catch (e) {
+            return;
+          }
+          // Re-query fresh rather than trusting the captured `bubble`
+          // node is still attached — another render may have already
+          // rebuilt the message list while this fetch was in flight.
+          const freshBubble = els.chatMessages.querySelector(selector);
+          if (!freshBubble) return;
+          freshBubble.innerHTML = `<img class="chat-img" src="${escapeHtml(url)}" alt="${escapeHtml(t("chat.attach.image"))}" data-file-img loading="lazy" />`;
+        })
+        .catch((e) => {
+          console.error("HUM: failed to load image attachment", filePath, e);
+          placeholder.removeAttribute("data-loading");
+          placeholder.classList.add("chat-img--error");
+          placeholder.setAttribute(
+            "aria-label",
+            t("chat.attach.imageLoadFailed"),
+          );
+        });
+    });
 }
 
 // Image lightbox — a larger preview shown when an image attachment
@@ -3206,15 +3740,15 @@ function hydrateChatFileImages(){
 // down). Reuses the exact same .modal-backdrop shell the confirm modal
 // already uses (see #imageLightboxBackdrop in index.html), just with
 // image-specific inner content instead of a text dialog.
-function openImageLightbox(url){
-  if(!els.imageLightboxBackdrop || !els.imageLightboxImg) return;
+function openImageLightbox(url) {
+  if (!els.imageLightboxBackdrop || !els.imageLightboxImg) return;
   els.imageLightboxImg.src = url;
   els.imageLightboxBackdrop.hidden = false;
 }
-function closeImageLightbox(){
-  if(!els.imageLightboxBackdrop) return;
+function closeImageLightbox() {
+  if (!els.imageLightboxBackdrop) return;
   els.imageLightboxBackdrop.hidden = true;
-  if(els.imageLightboxImg) els.imageLightboxImg.src = '';
+  if (els.imageLightboxImg) els.imageLightboxImg.src = "";
 }
 
 /* ===================================================================
@@ -3354,10 +3888,19 @@ let state = {
 // logout and when otherwise tearing down the signed-in session, so a
 // listener never keeps delivering updates (or errors) for an account
 // that's no longer signed in.
-function stopAllConversationWatchers(){
-  if(state.unsubChatsList){ state.unsubChatsList(); state.unsubChatsList = null; }
-  if(state.unsubChatMessages){ state.unsubChatMessages(); state.unsubChatMessages = null; }
-  if(state.unsubBlockedUsers){ state.unsubBlockedUsers(); state.unsubBlockedUsers = null; }
+function stopAllConversationWatchers() {
+  if (state.unsubChatsList) {
+    state.unsubChatsList();
+    state.unsubChatsList = null;
+  }
+  if (state.unsubChatMessages) {
+    state.unsubChatMessages();
+    state.unsubChatMessages = null;
+  }
+  if (state.unsubBlockedUsers) {
+    state.unsubBlockedUsers();
+    state.unsubBlockedUsers = null;
+  }
   state.chatsListRows = [];
   state.chatsListLoading = true;
   state.chatsListError = false;
@@ -3372,7 +3915,9 @@ function stopAllConversationWatchers(){
   // on any screen — nothing about anyone's online status should keep
   // updating once nobody is signed in on this device.
   stopPresenceListener();
-  ['chatsList', 'peopleResults', 'profileView', 'chatHeader'].forEach(clearPresenceWatchers);
+  ["chatsList", "peopleResults", "profileView", "chatHeader"].forEach(
+    clearPresenceWatchers,
+  );
   // Same idea for the typing indicator: stop watching whoever's typing
   // state was being shown in the (now closing) chat header. Clearing
   // the signed-in user's OWN typing flag is handled separately by
@@ -3393,22 +3938,22 @@ function stopAllConversationWatchers(){
 // Starts (or restarts) the live "who am I talking to, and what did
 // they last say" listener for the signed-in user. Safe to call more
 // than once — it always tears down any previous listener first.
-function startConversationsWatcher(){
-  if(state.unsubChatsList) state.unsubChatsList();
+function startConversationsWatcher() {
+  if (state.unsubChatsList) state.unsubChatsList();
   const me = currentUser();
-  if(!me) return;
+  if (!me) return;
   state.chatsListLoading = true;
   state.chatsListError = false;
-  if(state.activePanelView === "chats") renderChatsList();
+  if (state.activePanelView === "chats") renderChatsList();
   state.unsubChatsList = watchUserConversations(me.uid, (rows, err) => {
     state.chatsListLoading = false;
-    if(err){
+    if (err) {
       state.chatsListError = true;
-    }else{
+    } else {
       state.chatsListError = false;
       state.chatsListRows = rows;
     }
-    if(state.activePanelView === "chats") renderChatsList();
+    if (state.activePanelView === "chats") renderChatsList();
   });
 }
 
@@ -3418,16 +3963,16 @@ function startConversationsWatcher(){
 // blocking someone on one phone hides them from search/chat on a
 // laptop signed into the same account within moments, without a
 // refresh.
-function startBlockedUsersWatcher(){
-  if(state.unsubBlockedUsers) state.unsubBlockedUsers();
+function startBlockedUsersWatcher() {
+  if (state.unsubBlockedUsers) state.unsubBlockedUsers();
   const me = currentUser();
-  if(!me) return;
+  if (!me) return;
   state.blockedUsersLoading = true;
   state.unsubBlockedUsers = watchBlockedUsers(me.uid, (rows, err) => {
     state.blockedUsersLoading = false;
-    if(err){
+    if (err) {
       console.error("HUM: failed to load blocked users", err);
-    }else{
+    } else {
       state.blockedUsersRows = rows;
       state.myBlockedUids = new Set(rows.map((r) => r.blockedUid));
     }
@@ -3482,7 +4027,10 @@ function openActionMenu(triggerEl, actions) {
   const margin = 8;
   let left = rect.right - menu.offsetWidth;
   let top = rect.bottom + margin;
-  left = Math.max(margin, Math.min(left, window.innerWidth - menu.offsetWidth - margin));
+  left = Math.max(
+    margin,
+    Math.min(left, window.innerWidth - menu.offsetWidth - margin),
+  );
   if (top + menu.offsetHeight > window.innerHeight - margin) {
     top = Math.max(margin, rect.top - menu.offsetHeight - margin);
   }
@@ -3509,7 +4057,8 @@ function closeActionMenu() {
 document.addEventListener("click", (e) => {
   if (!els.actionMenu || els.actionMenu.hidden) return;
   if (els.actionMenu.contains(e.target)) return;
-  if (state.actionMenuTrigger && state.actionMenuTrigger.contains(e.target)) return;
+  if (state.actionMenuTrigger && state.actionMenuTrigger.contains(e.target))
+    return;
   closeActionMenu();
 });
 document.addEventListener("keydown", (e) => {
@@ -3528,7 +4077,8 @@ function openConfirmModal({ title, body, confirmLabel, danger = true }) {
     els.confirmModalBody.textContent = body;
     els.confirmModalCancel.textContent = t("common.cancel");
     els.confirmModalConfirm.textContent = confirmLabel;
-    els.confirmModalConfirm.className = "btn " + (danger ? "btn--danger" : "btn--primary");
+    els.confirmModalConfirm.className =
+      "btn " + (danger ? "btn--danger" : "btn--primary");
     els.confirmModalBackdrop.hidden = false;
 
     const cleanup = (result) => {
@@ -3618,10 +4168,15 @@ async function confirmAndDeleteMessage(convId, message, mode) {
   const isEveryone = mode === "everyone";
 
   const confirmed = await openConfirmModal({
-    title: t(isEveryone ? "confirm.deleteEveryoneTitle" : "confirm.deleteMeTitle"),
-    body: t(isEveryone ? "confirm.deleteEveryoneBody" : "confirm.deleteMeBody", {
-      name: other ? other.displayName : "",
-    }),
+    title: t(
+      isEveryone ? "confirm.deleteEveryoneTitle" : "confirm.deleteMeTitle",
+    ),
+    body: t(
+      isEveryone ? "confirm.deleteEveryoneBody" : "confirm.deleteMeBody",
+      {
+        name: other ? other.displayName : "",
+      },
+    ),
     confirmLabel: t("common.delete"),
     danger: true,
   });
@@ -3643,7 +4198,12 @@ async function confirmAndDeleteMessage(convId, message, mode) {
   // wired in openChat) is already subscribed to, so renderChatMessages()
   // picks up the change and re-renders on its own, same as any other
   // real-time message update.
-  showToast(t(isEveryone ? "toast.messageDeletedEveryone" : "toast.messageDeletedForMe"), "success");
+  showToast(
+    t(
+      isEveryone ? "toast.messageDeletedEveryone" : "toast.messageDeletedForMe",
+    ),
+    "success",
+  );
 }
 
 async function confirmAndRemoveConversation(otherUser) {
@@ -3668,7 +4228,11 @@ async function confirmAndRemoveConversation(otherUser) {
   showToast(t("toast.chatRemoved"), "success");
   // If the removed chat is the one currently open, leave it — there's
   // nothing left to show there for this account.
-  if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(otherUser.username)) {
+  if (
+    state.activeChatUsername &&
+    usernameDocId(state.activeChatUsername) ===
+      usernameDocId(otherUser.username)
+  ) {
     leaveActiveChat();
   }
 }
@@ -3697,7 +4261,11 @@ async function confirmAndBlockUser(otherUser) {
   // list) reflects the block without waiting on the round trip.
   state.myBlockedUids.add(otherUser.uid);
   showToast(t("toast.userBlocked", { name: otherUser.displayName }), "success");
-  if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(otherUser.username)) {
+  if (
+    state.activeChatUsername &&
+    usernameDocId(state.activeChatUsername) ===
+      usernameDocId(otherUser.username)
+  ) {
     leaveActiveChat();
   } else if (state.activePanelView === "chats") {
     renderChatsList();
@@ -3726,11 +4294,22 @@ async function confirmAndUnblockUser(otherUser) {
   }
 
   state.myBlockedUids.delete(otherUser.uid);
-  showToast(t("toast.userUnblocked", { name: otherUser.displayName }), "success");
-  if (state.mainView === "chat" && state.activeChatUser && state.activeChatUser.uid === otherUser.uid) {
+  showToast(
+    t("toast.userUnblocked", { name: otherUser.displayName }),
+    "success",
+  );
+  if (
+    state.mainView === "chat" &&
+    state.activeChatUser &&
+    state.activeChatUser.uid === otherUser.uid
+  ) {
     applyChatBlockState();
   }
-  if (state.mainView === "profileView" && state.viewingUser && state.viewingUser.uid === otherUser.uid) {
+  if (
+    state.mainView === "profileView" &&
+    state.viewingUser &&
+    state.viewingUser.uid === otherUser.uid
+  ) {
     renderProfileHero(els.mainProfileView, state.viewingUser, false);
   }
 }
@@ -3954,9 +4533,9 @@ registerAvatarClear.addEventListener("click", () => {
   });
 });
 
-function setFormBusy(form, busy){
+function setFormBusy(form, busy) {
   const btn = form.querySelector('button[type="submit"]');
-  if(btn) btn.disabled = busy;
+  if (btn) btn.disabled = busy;
 }
 
 /* ================= LOGIN SUBMIT ================= */
@@ -4184,12 +4763,17 @@ async function runPeopleSearch() {
   });
 
   try {
-    const results = await searchUsers(query, me ? usernameDocId(me.username) : null);
+    const results = await searchUsers(
+      query,
+      me ? usernameDocId(me.username) : null,
+    );
     if (myToken !== state.peopleSearchToken) return;
     // Blocked people are excluded from search entirely — they're not
     // just hidden with a note, they simply don't come up, same as the
     // signed-in user's own account already doesn't.
-    const visibleResults = results.filter((u) => !state.myBlockedUids.has(u.uid));
+    const visibleResults = results.filter(
+      (u) => !state.myBlockedUids.has(u.uid),
+    );
     renderPeopleResults(els.peopleResults, visibleResults, {
       query,
       selectedUsername: state.viewingUsername,
@@ -4249,7 +4833,8 @@ els.mainProfileView.addEventListener("click", (e) => {
   const menuBtn = e.target.closest("#btnProfileMenu");
   if (menuBtn) {
     e.stopPropagation();
-    if (state.viewingUser) openActionMenu(menuBtn, buildPersonActions(state.viewingUser));
+    if (state.viewingUser)
+      openActionMenu(menuBtn, buildPersonActions(state.viewingUser));
     return;
   }
   const btn = e.target.closest("#btnMessageUser");
@@ -4336,27 +4921,35 @@ async function openChat(username, navigate) {
   state.chatMessagesError = false;
   renderChatMessages();
   const watchedUsername = other.username;
-  state.unsubChatMessages = watchConversationMessages(me.uid, other.uid, (messages, err) => {
-    state.chatMessagesLoading = false;
-    if (err) {
-      state.chatMessagesError = true;
-    } else {
-      state.chatMessagesError = false;
-      state.chatMessagesData = messages;
-    }
-    // Guards against a listener callback for a chat the person has
-    // since navigated away from landing on the wrong screen.
-    if (state.activeChatUsername && usernameDocId(state.activeChatUsername) === usernameDocId(watchedUsername)) {
-      renderChatMessages();
-      // Read receipts: this fires for BOTH the initial load and every
-      // subsequent live update (a new incoming message arriving while
-      // the chat stays open included) — exactly the two moments the
-      // feature needs to mark things read. Fire-and-forget: nothing in
-      // the UI needs to wait on this write, and markMessagesRead()
-      // itself is a safe no-op if there's nothing new to mark.
-      if (!err) markMessagesRead(me.uid, other.uid, convId, messages);
-    }
-  });
+  state.unsubChatMessages = watchConversationMessages(
+    me.uid,
+    other.uid,
+    (messages, err) => {
+      state.chatMessagesLoading = false;
+      if (err) {
+        state.chatMessagesError = true;
+      } else {
+        state.chatMessagesError = false;
+        state.chatMessagesData = messages;
+      }
+      // Guards against a listener callback for a chat the person has
+      // since navigated away from landing on the wrong screen.
+      if (
+        state.activeChatUsername &&
+        usernameDocId(state.activeChatUsername) ===
+          usernameDocId(watchedUsername)
+      ) {
+        renderChatMessages();
+        // Read receipts: this fires for BOTH the initial load and every
+        // subsequent live update (a new incoming message arriving while
+        // the chat stays open included) — exactly the two moments the
+        // feature needs to mark things read. Fire-and-forget: nothing in
+        // the UI needs to wait on this write, and markMessagesRead()
+        // itself is a safe no-op if there's nothing new to mark.
+        if (!err) markMessagesRead(me.uid, other.uid, convId, messages);
+      }
+    },
+  );
 }
 
 // Clicking the chat header jumps back to that person's profile — a
@@ -4371,7 +4964,11 @@ els.chatHeaderInfo.addEventListener("click", () => {
 els.chatHeaderMenuBtn &&
   els.chatHeaderMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (state.activeChatUser) openActionMenu(els.chatHeaderMenuBtn, buildPersonActions(state.activeChatUser));
+    if (state.activeChatUser)
+      openActionMenu(
+        els.chatHeaderMenuBtn,
+        buildPersonActions(state.activeChatUser),
+      );
   });
 
 // Keep in sync with the max-height set on .chat-composer__input in
@@ -4398,7 +4995,8 @@ async function sendChatMessage() {
   // Extra client-side guard on top of the security rule: the composer
   // is already disabled while blocked (see applyChatBlockState), this
   // just makes sure a queued Enter keypress can't slip a send through.
-  if (state.activeChatUser && state.myBlockedUids.has(state.activeChatUser.uid)) return;
+  if (state.activeChatUser && state.myBlockedUids.has(state.activeChatUser.uid))
+    return;
   const text = els.chatInput.value.trim();
   if (!text) return;
   const otherUsername = state.activeChatUsername;
@@ -4429,8 +5027,13 @@ async function sendChatMessage() {
     // as a generic "couldn't be delivered" message rather than "you've
     // been blocked", since whether someone blocked you isn't something
     // HUM reveals to the blocked person.
-    const isPermissionError = e && (e.code === "permission-denied" || /permission/i.test(e.message || ""));
-    showToast(isPermissionError ? t("errors.sendFailed") : t("errors.network"), "error");
+    const isPermissionError =
+      e &&
+      (e.code === "permission-denied" || /permission/i.test(e.message || ""));
+    showToast(
+      isPermissionError ? t("errors.sendFailed") : t("errors.network"),
+      "error",
+    );
     // Restore the draft so the person doesn't lose what they typed.
     els.chatInput.value = text;
     autoSizeChatInput();
@@ -4474,16 +5077,20 @@ els.chatVoiceCancelBtn &&
 // the mic button starts recording. Resetting .value after reading
 // files lets the SAME file be picked again in a row (browsers don't
 // fire 'change' a second time for an unchanged selection otherwise).
-els.chatAttachBtn &&
+if (els.chatAttachBtn) {
   els.chatAttachBtn.addEventListener("click", () => {
     if (els.chatFileInput) els.chatFileInput.click();
   });
-els.chatFileInput &&
-  els.chatFileInput.addEventListener("change", () => {
-    const files = els.chatFileInput.files;
-    els.chatFileInput.value = "";
+}
+if (els.chatFileInput) {
+  els.chatFileInput.addEventListener("change", (event) => {
+    // Make a stable copy BEFORE clearing the input. FileList belongs to
+    // the input element and can become empty after .value is reset.
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
     sendAttachmentFiles(files);
   });
+}
 
 // Image lightbox: backdrop click (outside the image) or the close
 // button dismiss it, same interaction pattern as the confirm modal.
@@ -4496,7 +5103,11 @@ els.imageLightboxCloseBtn &&
     closeImageLightbox();
   });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && els.imageLightboxBackdrop && !els.imageLightboxBackdrop.hidden) {
+  if (
+    e.key === "Escape" &&
+    els.imageLightboxBackdrop &&
+    !els.imageLightboxBackdrop.hidden
+  ) {
     closeImageLightbox();
   }
 });
@@ -4517,7 +5128,9 @@ els.chatMessages.addEventListener("click", (e) => {
     if (!me || !other || !msgRow) return;
     const messageId = msgRow.getAttribute("data-msg-id");
     const isOwn = msgRow.getAttribute("data-msg-own") === "true";
-    const message = (state.chatMessagesData || []).find((m) => m.id === messageId);
+    const message = (state.chatMessagesData || []).find(
+      (m) => m.id === messageId,
+    );
     if (!message) return;
     const convId = conversationId(me.uid, other.uid);
     openActionMenu(menuBtn, buildMessageActions(convId, message, isOwn));
@@ -4716,7 +5329,11 @@ function renderBlockedUsersList() {
   }
   els.settingsBlockedList.innerHTML = rows
     .map((row) => {
-      const displayUser = { username: row.blockedUsername, displayName: row.blockedDisplayName, avatar: row.blockedAvatar };
+      const displayUser = {
+        username: row.blockedUsername,
+        displayName: row.blockedDisplayName,
+        avatar: row.blockedAvatar,
+      };
       return `
         <div class="result-row" data-blocked-uid="${escapeHtml(row.blockedUid)}">
           <div class="avatar" style="background:${avatarBg(displayUser)}">${avatarMarkup(displayUser)}</div>
@@ -4872,7 +5489,10 @@ if (!FIREBASE_CONFIG_ERROR) {
       startBlockedUsersWatcher();
       startPresence(user.uid);
     } catch (e) {
-      console.error("HUM: failed to load or recover profile for existing session", e);
+      console.error(
+        "HUM: failed to load or recover profile for existing session",
+        e,
+      );
       state.authReady = true;
       state.me = null;
       els.appShell.hidden = true;
