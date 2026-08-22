@@ -501,6 +501,65 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   .chat-msg__menu-btn{opacity:.55;}
 }
 
+/* Per-message "add reaction" trigger — same sizing/hover treatment as
+   the "⋮" menu button right next to it (see renderChatMessages), just
+   a different icon. Kept as its own class rather than reusing
+   .chat-msg__menu-btn so each can be styled/targeted independently if
+   HUM's design needs to diverge later. */
+.chat-msg__react-btn{
+  flex:none;width:20px;height:20px;padding:0;border:none;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  background:transparent;color:inherit;opacity:0;transition:opacity .15s ease,background .15s ease;
+}
+.chat-msg:hover .chat-msg__react-btn{opacity:.7;}
+.chat-msg__react-btn:hover,.chat-msg__react-btn:focus-visible{opacity:1;background:rgba(127,127,127,.18);}
+@media (hover:none){
+  .chat-msg__react-btn{opacity:.55;}
+}
+
+/* Aggregated reaction counters under a bubble (see reactionsBarMarkup
+   in app.js) — compact pill chips, own messages align them to the
+   right to match the bubble above them, same as .chat-msg--own already
+   does for the whole column. */
+.chat-msg__reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;max-width:100%;}
+.chat-msg--own .chat-msg__reactions{justify-content:flex-end;}
+.chat-msg__reaction-chip{
+  display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;
+  background:var(--surface);border:1px solid var(--border);color:var(--text-muted);
+  font-size:12px;line-height:1.5;cursor:pointer;font-family:inherit;
+  transition:background .15s ease,border-color .15s ease,color .15s ease;
+}
+.chat-msg__reaction-chip:hover{background:var(--surface-hover);}
+/* The signed-in user's own reactions use the same active/selected
+   accent treatment as .lang-pill.is-active / .lang-option.is-active
+   elsewhere in HUM, rather than a new color language. */
+.chat-msg__reaction-chip.is-mine{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-strong);}
+.chat-msg__reaction-emoji{font-size:13px;line-height:1;}
+.chat-msg__reaction-count{font-weight:700;font-variant-numeric:tabular-nums;}
+
+/* ===================================================================
+   REACTION PICKER (popover with the six supported emoji)
+   Same fixed-position/shadow/z-index treatment as .action-menu, just a
+   pill-shaped row of emoji buttons instead of a list of text items —
+   see openReactionPicker/closeReactionPicker in app.js.
+=================================================================== */
+.reaction-picker{
+  position:fixed;z-index:70;display:flex;align-items:center;gap:2px;
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;
+  box-shadow:var(--shadow-soft);padding:5px;max-width:calc(100vw - 24px);
+}
+.reaction-picker[hidden]{display:none;}
+.reaction-picker__emoji{
+  flex:none;width:36px;height:36px;padding:0;border:none;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;font-size:19px;line-height:1;
+  background:none;cursor:pointer;transition:background .15s ease,transform .1s ease;
+}
+.reaction-picker__emoji:hover,.reaction-picker__emoji:focus-visible{background:var(--surface-hover);transform:scale(1.12);}
+.reaction-picker__emoji.is-active{background:var(--accent-soft);}
+@media (max-width:480px){
+  .reaction-picker__emoji{width:34px;height:34px;font-size:18px;}
+}
+
 /* Composer: input and send button share --composer-h so they always
    line up exactly, at every breakpoint (see the --composer-h override
    in the small-phone media query below instead of separately resizing
@@ -613,16 +672,10 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   object-fit:cover;cursor:pointer;background:rgba(127,127,127,.12);
 }
 /* Loading/error placeholder shown before a signed URL resolves (see
-   hydrateChatFileImages) — a plain fixed-size box with a subtle pulse,
-   never a fake progress bar standing in for real upload/load state. */
-.chat-img--loading{
-  width:220px;height:160px;display:flex;align-items:center;justify-content:center;
-  animation:chat-img-pulse 1.4s ease-in-out infinite;cursor:default;
-}
-@keyframes chat-img-pulse{
-  0%,100%{background:rgba(127,127,127,.10);} 50%{background:rgba(127,127,127,.22);}
-}
-.chat-img--error{animation:none;background:rgba(220,80,80,.12);}
+   hydrateChatFileImages) — a plain fixed-size box, never a fake
+   progress bar standing in for real upload/load state. Shimmer
+   styling for .chat-img--loading lives with the rest of the skeleton
+   system further down this file. */
 
 .chat-msg__bubble--file{display:flex;align-items:center;gap:10px;padding:10px 12px;min-width:220px;max-width:280px;}
 .chat-file__icon{
@@ -849,3 +902,82 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
    redundant "whole row is tappable" fallback, so it must stay visible
    and tappable on every screen size, phones included. */
 .blocked-list .result-row .btn{display:inline-flex;}
+
+/* ===================================================================
+   SKELETON LOADING SYSTEM
+   Reusable shimmer placeholders shown at real loading boundaries only
+   (see renderChatsList/renderChatMessages/renderPeopleResults/
+   openProfileView in app.js — never a fake setTimeout delay). Built
+   from a small set of primitives (.skeleton / .skeleton-avatar /
+   .skeleton-line) so every surface (chat list, messages, people
+   search, profile) shares one visual language and both themes.
+=================================================================== */
+.skeleton{
+  position:relative;overflow:hidden;background:var(--surface-hover);
+  border-radius:var(--radius-sm);
+}
+.skeleton::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,var(--skeleton-shine,rgba(255,255,255,.07)),transparent);
+  transform:translateX(-100%);animation:skeleton-shimmer 1.6s ease-in-out infinite;
+}
+[data-theme="light"]{ --skeleton-shine:rgba(0,0,0,.05); }
+@keyframes skeleton-shimmer{
+  100%{transform:translateX(100%);}
+}
+.skeleton-avatar{border-radius:50%;flex:none;}
+.skeleton-line{height:12px;border-radius:6px;display:block;}
+
+/* Chat list row skeleton — mirrors .result-row's own layout so the
+   swap to real rows in renderChatsList() never shifts height. */
+.skeleton-chat-row{
+  display:flex;align-items:center;gap:12px;padding:11px 10px;
+}
+.skeleton-chat-row .result-row__info{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}
+.skeleton-chat-row .skeleton-line--time{width:28px;height:10px;flex:none;}
+.skeleton-group{display:flex;flex-direction:column;}
+.skeleton-group--rows{gap:2px;}
+
+/* People-search row skeleton — same shape plus a ghost "View" button
+   so the row's overall width doesn't jump once real results arrive. */
+.skeleton-search-row{
+  display:flex;align-items:center;gap:12px;padding:11px 10px;
+}
+.skeleton-search-row .result-row__info{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}
+.skeleton-search-row .skeleton-btn{width:56px;height:28px;border-radius:var(--radius-sm);flex:none;}
+
+/* Message bubble skeletons — reuse .chat-msg's own/theirs alignment so
+   they sit exactly where real bubbles will land (see skeletonMessageMarkup). */
+.skeleton-message{pointer-events:none;}
+.skeleton-message__bubble{border-radius:var(--radius-md);}
+
+/* Profile skeleton — sits inside the same .profile-hero/.profile-meta
+   shells renderProfileHero() itself renders into, so real content
+   swaps in without a layout jump. */
+.skeleton-profile-meta-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:12px 0;border-bottom:1px solid var(--border);
+}
+
+/* Image-attachment loading placeholder (see hydrateChatFileImages) —
+   now uses the shared shimmer instead of its own one-off pulse, same
+   fixed box, same "never a fake progress bar" behavior. */
+.chat-img--loading{
+  width:220px;height:160px;display:flex;align-items:center;justify-content:center;
+  background:var(--surface-hover);position:relative;overflow:hidden;cursor:default;
+}
+.chat-img--loading::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,var(--skeleton-shine,rgba(255,255,255,.07)),transparent);
+  transform:translateX(-100%);animation:skeleton-shimmer 1.6s ease-in-out infinite;
+}
+.chat-img--error{animation:none;background:rgba(220,80,80,.12);}
+.chat-img--error::after{display:none;}
+
+@media (prefers-reduced-motion:reduce){
+  .skeleton::after,.chat-img--loading::after{animation:none;opacity:0;}
+}
+
+@media (max-width:480px){
+  .skeleton-search-row .skeleton-btn{display:none;}
+}

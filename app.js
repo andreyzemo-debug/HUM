@@ -72,6 +72,36 @@
 //              return exists(/databases/$(database)/documents/users/$(a)/blocked/$(b))
 //                || exists(/databases/$(database)/documents/users/$(b)/blocked/$(a));
 //            }
+//            // The six reactions HUM supports — must stay in sync with
+//            // REACTION_EMOJIS in app.js.
+//            function REACTION_EMOJIS(){ return ['❤️','👍','😂','😮','😢','🔥']; }
+//            function reactionUids(m, emoji){ return (emoji in m) ? m[emoji] : []; }
+//            // True only if `before` -> `after` is EXACTLY: one uid
+//            // (== request.auth.uid) added to, or removed from, ONE
+//            // emoji's array — nothing else in `reactions` changed.
+//            function isValidReactionsChange(before, after, uid){
+//              let b = ('reactions' in before) ? before.reactions : {};
+//              let a = ('reactions' in after) ? after.reactions : {};
+//              let changed = a.diff(b).affectedKeys();
+//              return changed.size() == 1
+//                && a.keys().hasOnly(REACTION_EMOJIS())
+//                && b.keys().hasOnly(REACTION_EMOJIS())
+//                && (
+//                  ('❤️' in changed && isSelfToggle(reactionUids(b,'❤️'), reactionUids(a,'❤️'), uid)) ||
+//                  ('👍' in changed && isSelfToggle(reactionUids(b,'👍'), reactionUids(a,'👍'), uid)) ||
+//                  ('😂' in changed && isSelfToggle(reactionUids(b,'😂'), reactionUids(a,'😂'), uid)) ||
+//                  ('😮' in changed && isSelfToggle(reactionUids(b,'😮'), reactionUids(a,'😮'), uid)) ||
+//                  ('😢' in changed && isSelfToggle(reactionUids(b,'😢'), reactionUids(a,'😢'), uid)) ||
+//                  ('🔥' in changed && isSelfToggle(reactionUids(b,'🔥'), reactionUids(a,'🔥'), uid))
+//                );
+//            }
+//            // True if `after` is `before` with exactly `uid` added
+//            // (nothing removed), OR exactly `uid` removed (nothing
+//            // added) — i.e. one person toggling their own reaction.
+//            function isSelfToggle(before, after, uid){
+//              return (after.size() == before.size() + 1 && after.removeAll(before).hasOnly([uid]))
+//                || (before.size() == after.size() + 1 && before.removeAll(after).hasOnly([uid]));
+//            }
 //
 //            match /users/{uid} {
 //              allow read: if true;
@@ -192,6 +222,16 @@
 //                    (request.auth.uid == resource.data.from
 //                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedForEveryone'])
 //                      && request.resource.data.deletedForEveryone == true)
+//                    ||
+//                    // (D) Reactions — EITHER participant, touching ONLY
+//                    //     the `reactions` map, and only ever adding/
+//                    //     removing THEIR OWN uid from exactly one
+//                    //     emoji's array (see isValidReactionsChange
+//                    //     below) — never another participant's uid,
+//                    //     never more than one emoji at a time, never a
+//                    //     key outside the six supported emoji.
+//                    (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+//                      && isValidReactionsChange(resource.data, request.resource.data, request.auth.uid))
 //                  );
 //                allow delete: if false;
 //              }
@@ -267,6 +307,21 @@
 //          displayed once tombstoned. (A tombstoned voice message's
 //          underlying Supabase audio file is intentionally left alone
 //          too — out of scope for this pass.))
+//        - conversations/{convId}/messages/{msgId}.reactions: map of
+//          emoji -> string[] of reactor UIDs, e.g.
+//          { "❤️": ["uid1","uid2"], "😂": ["uid3"] } — see the
+//          MESSAGE REACTIONS section in app.js
+//          (toggleMessageReaction/reactionsBarMarkup). Any participant
+//          may add/remove ONLY their own uid, from ONE emoji at a
+//          time, via arrayUnion/arrayRemove nested one level inside a
+//          setDoc({merge:true}) — see isValidReactionsChange above for
+//          the exact server-side shape this is restricted to. Works
+//          identically for every message type (text/voice/image/file)
+//          since it's just another field on the same doc; a tombstoned
+//          ("delete for everyone") message keeps its `reactions` data
+//          in Firestore untouched, renderChatMessages() simply stops
+//          displaying it once deletedForEveryone is set, same as it
+//          already does for the original bubble content.
 //
 //   6. Realtime Database → Rules, paste EXACTLY this (separate product
 //      from Firestore, separate console tab, separate rules language —
@@ -2023,6 +2078,53 @@ async function deleteMessageForEveryone(convId, message) {
   // in the UI section, neither of which calls into Storage).
 }
 
+/* ===================================================================
+   SECTION: MESSAGE REACTIONS
+   Reactions live directly on the existing message document as a
+   `reactions` map — no new collection, no new document, no new
+   listener: { "❤️": ["uid1","uid2"], "😂": ["uid3"] }. Every reaction
+   type works on every message type (text/voice/image/file) because
+   this is a field on the message doc itself, not something tied to
+   `type` or to the bubble markup — see reactionsBarMarkup/
+   renderChatMessages below, which render this the same way regardless
+   of what kind of bubble the message is.
+=================================================================== */
+
+// The only six reactions HUM supports, in the exact order the picker
+// and the aggregated counters both display them. Centralized here so
+// the UI (openReactionPicker/reactionsBarMarkup) and the Firestore
+// write path (toggleMessageReaction/handleToggleReaction) can never
+// drift out of sync with each other.
+const REACTION_EMOJIS = ["❤️", "👍", "😂", "😮", "😢", "🔥"];
+
+// Adds or removes ONE user's reaction on ONE message, for ONE emoji —
+// mirrors deleteMessageForMe's setDoc+merge pattern exactly, just one
+// level deeper into the doc (reactions.<emoji> instead of a top-level
+// field). Nesting the arrayUnion/arrayRemove sentinel inside the
+// `reactions` object (rather than a dotted "reactions.❤️" string key)
+// is what makes setDoc's merge:true touch ONLY that one emoji's array
+// — every other emoji already on the message, and every other field on
+// the doc, is left completely untouched. arrayUnion/arrayRemove are
+// themselves atomic add/remove-from-array operations, so two different
+// users reacting to the same message at the same moment can never
+// clobber each other the way a plain read-modify-write would.
+// `hasReacted` is decided by the caller (see handleToggleReaction)
+// from the live message data already in state.chatMessagesData — no
+// extra read is needed here, matching how deleteMessageForMe/
+// deleteMessageForEveryone never re-fetch the doc before writing.
+async function toggleMessageReaction(convId, msgId, emoji, uid, hasReacted) {
+  requireFirebaseConfig();
+  await setDoc(
+    doc(db, "conversations", convId, "messages", msgId),
+    {
+      reactions: {
+        [emoji]: hasReacted ? arrayRemove(uid) : arrayUnion(uid),
+      },
+    },
+    { merge: true },
+  );
+}
+
 // Live-subscribes to this user's conversation list, most recently
 // active first, using the denormalized participantsInfo/lastMessage so
 // the Chats panel can render straight from this snapshot with no
@@ -2320,6 +2422,12 @@ const translations = {
         listPreviewPhoto: "📷 Photo",
         listPreviewFile: "📎 File: {name}",
       },
+      reactions: {
+        add: "Add reaction",
+        picker: "Choose a reaction",
+        emojiLabel: "React with {emoji}",
+        chipLabel: "{emoji} reactions: {count}",
+      },
     },
     menu: {
       remove: "Remove",
@@ -2525,6 +2633,12 @@ const translations = {
         imageLoadFailed: "Не удалось загрузить изображение",
         listPreviewPhoto: "📷 Фото",
         listPreviewFile: "📎 Файл: {name}",
+      },
+      reactions: {
+        add: "Добавить реакцию",
+        picker: "Выберите реакцию",
+        emojiLabel: "Отреагировать {emoji}",
+        chipLabel: "{emoji} реакций: {count}",
       },
     },
     menu: {
@@ -2732,6 +2846,12 @@ const translations = {
         imageLoadFailed: "Rasmni yuklab boʻlmadi",
         listPreviewPhoto: "📷 Rasm",
         listPreviewFile: "📎 Fayl: {name}",
+      },
+      reactions: {
+        add: "Reaksiya qoʻshish",
+        picker: "Reaksiyani tanlang",
+        emojiLabel: "{emoji} bilan reaksiya bildirish",
+        chipLabel: "{emoji} reaksiyalar: {count}",
       },
     },
     menu: {
@@ -3297,13 +3417,132 @@ function avatarBg(user) {
   return colorForUsername(user.username);
 }
 
+/* ================= SKELETON LOADING SYSTEM =================
+   Reusable shimmer placeholders shown only at real loading boundaries
+   — chats list (state.chatsListLoading), open-chat messages
+   (state.chatMessagesLoading), people search (the `loading` flag
+   renderPeopleResults already receives from runPeopleSearch), and a
+   viewed profile (openProfileView, while findUserByUsername is in
+   flight). No setTimeout anywhere here — every skeleton is swapped
+   for real content (or an existing error/empty state) the moment the
+   underlying Firestore/Supabase call actually resolves. Everything is
+   aria-hidden/non-focusable since it carries no real content; the
+   surrounding container carries role="status"/aria-busy instead so
+   screen readers get a single, sane "loading" announcement rather
+   than reading out placeholder rows. */
+function skeletonAvatarMarkup(size) {
+  return `<div class="skeleton skeleton-avatar" style="width:${size}px;height:${size}px" aria-hidden="true"></div>`;
+}
+
+function skeletonLineMarkup(widthPct, extraStyle) {
+  return `<div class="skeleton skeleton-line" style="width:${widthPct}%;${extraStyle || ""}" aria-hidden="true"></div>`;
+}
+
+// Slightly different line widths per row so a run of skeleton rows
+// doesn't look like a single repeated tile.
+const CHAT_ROW_SKELETON_WIDTHS = [
+  [46, 72],
+  [58, 54],
+  [38, 66],
+  [64, 40],
+  [50, 60],
+  [42, 50],
+];
+
+function chatsListSkeletonMarkup(count = 6) {
+  const rows = Array.from({ length: count }, (_, i) => {
+    const [nameW, previewW] = CHAT_ROW_SKELETON_WIDTHS[i % CHAT_ROW_SKELETON_WIDTHS.length];
+    return `
+      <div class="skeleton-chat-row" aria-hidden="true">
+        ${skeletonAvatarMarkup(44)}
+        <div class="result-row__info">
+          ${skeletonLineMarkup(nameW, "height:13px;")}
+          ${skeletonLineMarkup(previewW, "height:11px;")}
+        </div>
+        <div class="skeleton skeleton-line skeleton-line--time" aria-hidden="true"></div>
+      </div>
+    `;
+  }).join("");
+  return `<div class="skeleton-group skeleton-group--rows" role="status" aria-busy="true" aria-label="${escapeHtml(t("common.loading"))}">${rows}</div>`;
+}
+
+function peopleResultsSkeletonMarkup(count = 6) {
+  const rows = Array.from({ length: count }, (_, i) => {
+    const [nameW, previewW] = CHAT_ROW_SKELETON_WIDTHS[i % CHAT_ROW_SKELETON_WIDTHS.length];
+    return `
+      <div class="skeleton-search-row" aria-hidden="true">
+        ${skeletonAvatarMarkup(44)}
+        <div class="result-row__info">
+          ${skeletonLineMarkup(nameW, "height:13px;")}
+          ${skeletonLineMarkup(previewW, "height:11px;")}
+        </div>
+        <div class="skeleton skeleton-btn" aria-hidden="true"></div>
+      </div>
+    `;
+  }).join("");
+  return `<div class="skeleton-group skeleton-group--rows" role="status" aria-busy="true" aria-label="${escapeHtml(t("common.loading"))}">${rows}</div>`;
+}
+
+// Fixed own/theirs + width/height layout that reads like a real short
+// exchange (mix of short and long incoming/outgoing bubbles), matching
+// what section 2 of the loading-states brief asked for.
+const MESSAGE_SKELETON_LAYOUT = [
+  { own: false, width: 140, height: 20 },
+  { own: false, width: 210, height: 44 },
+  { own: true, width: 120, height: 20 },
+  { own: false, width: 170, height: 20 },
+  { own: true, width: 230, height: 44 },
+  { own: true, width: 100, height: 20 },
+  { own: false, width: 190, height: 44 },
+];
+
+function skeletonMessageMarkup({ own, width, height }) {
+  return `
+    <div class="chat-msg ${own ? "chat-msg--own" : "chat-msg--theirs"} skeleton-message" aria-hidden="true">
+      <div class="skeleton skeleton-message__bubble" style="width:${width}px;height:${height}px"></div>
+    </div>
+  `;
+}
+
+function messagesSkeletonMarkup() {
+  const bubbles = MESSAGE_SKELETON_LAYOUT.map(skeletonMessageMarkup).join("");
+  return `<div class="skeleton-group" role="status" aria-busy="true" aria-label="${escapeHtml(t("common.loading"))}">${bubbles}</div>`;
+}
+
+// Sits inside the exact same .profile-hero/.profile-meta shells
+// renderProfileHero() renders into, so the swap to real content never
+// jumps in height (see openProfileView).
+function profileHeroSkeletonMarkup() {
+  return `
+    <div class="profile-hero" role="status" aria-busy="true" aria-label="${escapeHtml(t("common.loading"))}">
+      ${skeletonAvatarMarkup(100)}
+      ${skeletonLineMarkup(46, "height:20px;margin:16px 0 10px;")}
+      ${skeletonLineMarkup(30, "height:13px;margin-bottom:18px;")}
+      ${skeletonLineMarkup(64, "height:13px;")}
+    </div>
+    <div class="profile-meta" aria-hidden="true">
+      <div class="skeleton-profile-meta-row">${skeletonLineMarkup(22, "height:12px;")}${skeletonLineMarkup(28, "height:12px;")}</div>
+      <div class="skeleton-profile-meta-row">${skeletonLineMarkup(22, "height:12px;")}${skeletonLineMarkup(28, "height:12px;")}</div>
+    </div>
+  `;
+}
+
+// Reuses the existing "network error" empty-state look (same class
+// people-results__empty already uses) so a failed/empty profile load
+// falls back to a familiar state rather than a permanently-stuck
+// skeleton — see section 12 requirement that skeletons must never
+// linger after a failed load.
+function profileViewErrorMarkup(message) {
+  return `<div class="people-results__empty" style="padding:60px 24px;">${escapeHtml(message)}</div>`;
+}
+
 function renderPeopleResults(
   container,
   users,
   { query, selectedUsername, loading, error },
 ) {
   if (loading) {
-    container.innerHTML = `<div class="people-results__hint">${escapeHtml(t("common.loading"))}</div>`;
+    container.innerHTML = peopleResultsSkeletonMarkup();
     clearPresenceWatchers("peopleResults");
     return;
   }
@@ -3454,7 +3693,7 @@ function renderChatsList() {
     return;
   }
   if (state.chatsListLoading) {
-    els.chatsListContainer.innerHTML = `<div class="people-results__hint">${escapeHtml(t("common.loading"))}</div>`;
+    els.chatsListContainer.innerHTML = chatsListSkeletonMarkup();
     clearPresenceWatchers("chatsList");
     return;
   }
@@ -3513,7 +3752,7 @@ function renderChatMessages() {
     return;
   }
   if (state.chatMessagesLoading) {
-    els.chatMessages.innerHTML = `<div class="chat-empty">${escapeHtml(t("common.loading"))}</div>`;
+    els.chatMessages.innerHTML = messagesSkeletonMarkup();
     return;
   }
   // "Delete for me" (see deleteMessageForMe/confirmAndDeleteMessage)
@@ -3567,10 +3806,25 @@ function renderChatMessages() {
         : `<button type="button" class="chat-msg__menu-btn" data-msg-menu aria-label="${escapeHtml(t("common.moreOptions"))}">
              <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>
            </button>`;
+      // Reaction trigger + the aggregated counters underneath the
+      // bubble — both omitted for a tombstoned message, same as
+      // menuMarkup above, so "deleted messages must not show
+      // reactions" holds even if the doc still carries a `reactions`
+      // field underneath (see reactionsBarMarkup: rendering is what
+      // hides it, the data itself is never touched by deletion).
+      const reactBtnMarkup = isDeletedForEveryone
+        ? ""
+        : `<button type="button" class="chat-msg__react-btn" data-msg-react-btn aria-label="${escapeHtml(t("chat.reactions.add"))}" title="${escapeHtml(t("chat.reactions.add"))}">
+             <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 14c.9 1.2 2.1 1.8 3.5 1.8s2.6-.6 3.5-1.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/></svg>
+           </button>`;
+      const reactionsMarkup = isDeletedForEveryone
+        ? ""
+        : reactionsBarMarkup(m, me.uid);
       return `
         <div class="chat-msg ${isOwn ? "chat-msg--own" : "chat-msg--theirs"}" data-msg-id="${escapeHtml(m.id || "")}" data-msg-own="${isOwn}">
           ${bubbleMarkup}
-          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}${menuMarkup}</div>
+          ${reactionsMarkup}
+          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}${reactBtnMarkup}${menuMarkup}</div>
         </div>
       `;
     })
@@ -3615,6 +3869,35 @@ function voiceMessageBubbleMarkup(m) {
 // wired near the rest of the composer/chat event listeners further
 // down (after `els` is defined) — see the els.chatMessages listener
 // alongside els.chatComposerForm/els.chatInput below.
+
+// Renders the compact "❤️ 3  😂 1  🔥 2" row under a message's bubble
+// (see renderChatMessages above). Only emoji with at least one
+// reactor are shown, always in REACTION_EMOJIS order regardless of the
+// order reactions were added in, so the row never visually reshuffles
+// as people react. Works identically for every message type — this
+// only ever reads m.reactions, never m.type — which is what makes
+// reactions "just work" on text/voice/image/file bubbles alike without
+// each bubble-markup function needing its own copy of this logic.
+// Each chip IS the toggle control: clicking a chip you're already part
+// of removes your reaction, clicking one you're not part of adds it
+// (see the data-reaction-chip handling in the click delegation below)
+// — the reaction picker (openReactionPicker) is only needed to ADD a
+// reaction that has no chip yet.
+function reactionsBarMarkup(m, meUid) {
+  const reactions = m && m.reactions;
+  if (!reactions || typeof reactions !== "object") return "";
+  const chips = REACTION_EMOJIS.map((emoji) => {
+    const uids = Array.isArray(reactions[emoji]) ? reactions[emoji] : [];
+    if (!uids.length) return "";
+    const mine = !!meUid && uids.includes(meUid);
+    return `
+      <button type="button" class="chat-msg__reaction-chip${mine ? " is-mine" : ""}" data-reaction-chip data-reaction-emoji="${escapeHtml(emoji)}" aria-pressed="${mine}" aria-label="${escapeHtml(t("chat.reactions.chipLabel", { emoji, count: uids.length }))}">
+        <span class="chat-msg__reaction-emoji">${emoji}</span><span class="chat-msg__reaction-count">${uids.length}</span>
+      </button>
+    `;
+  }).join("");
+  return chips ? `<div class="chat-msg__reactions">${chips}</div>` : "";
+}
 
 // Signed URLs for private chat-files objects are short-lived (see
 // getChatFileSignedUrl's 3600s) but a chat can easily stay open longer
@@ -3823,6 +4106,7 @@ const els = {
   themeToggle: document.getElementById("themeToggle"),
 
   actionMenu: document.getElementById("actionMenu"),
+  reactionPicker: document.getElementById("reactionPicker"),
   confirmModalBackdrop: document.getElementById("confirmModalBackdrop"),
   confirmModalTitle: document.getElementById("confirmModalTitle"),
   confirmModalBody: document.getElementById("confirmModalBody"),
@@ -3882,6 +4166,10 @@ let state = {
   // restore aria-expanded on the right element (see openActionMenu/
   // closeActionMenu).
   actionMenuTrigger: null,
+
+  // Same tracking role as actionMenuTrigger, just for the reaction-emoji
+  // popover (see openReactionPicker/closeReactionPicker).
+  reactionPickerTrigger: null,
 };
 
 // Stops any live Firestore listeners this device has open — called on
@@ -4051,21 +4339,131 @@ function closeActionMenu() {
   }
 }
 
+// Renders the six-emoji reaction picker (see REACTION_EMOJIS) into the
+// shared #reactionPicker popover and positions it near `triggerEl` —
+// same positioning/clamping logic as openActionMenu above, just a
+// second, differently-shaped popover rather than a second copy of
+// this one. Any emoji the signed-in user has already reacted with is
+// highlighted (`is-active`) so the picker itself also communicates
+// "your current reactions", not just the chips under the bubble.
+// Clicking an emoji here always calls handleToggleReaction — for an
+// emoji the user hasn't used yet that adds it; for one they're already
+// part of (shown active) it removes it, exactly like clicking that
+// same emoji's chip under the bubble would.
+function openReactionPicker(triggerEl, convId, message, meUid) {
+  const picker = els.reactionPicker;
+  if (!picker || !triggerEl || !message || !message.id) return;
+  const reactions = message.reactions || {};
+  picker.setAttribute("aria-label", t("chat.reactions.picker"));
+  picker.innerHTML = REACTION_EMOJIS.map((emoji) => {
+    const uids = Array.isArray(reactions[emoji]) ? reactions[emoji] : [];
+    const mine = !!meUid && uids.includes(meUid);
+    return `
+      <button type="button" class="reaction-picker__emoji${mine ? " is-active" : ""}" data-picker-emoji="${escapeHtml(emoji)}" role="menuitemradio" aria-checked="${mine}" aria-label="${escapeHtml(t("chat.reactions.emojiLabel", { emoji }))}">${emoji}</button>
+    `;
+  }).join("");
+  picker.hidden = false;
+  picker.querySelectorAll("[data-picker-emoji]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const emoji = btn.getAttribute("data-picker-emoji");
+      closeReactionPicker();
+      handleToggleReaction(convId, message, emoji, meUid);
+    });
+  });
+
+  // Position after render so picker.offsetWidth/offsetHeight are real.
+  const rect = triggerEl.getBoundingClientRect();
+  const margin = 8;
+  let left = rect.left;
+  let top = rect.bottom + margin;
+  left = Math.max(
+    margin,
+    Math.min(left, window.innerWidth - picker.offsetWidth - margin),
+  );
+  if (top + picker.offsetHeight > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - picker.offsetHeight - margin);
+  }
+  picker.style.left = `${left}px`;
+  picker.style.top = `${top}px`;
+  triggerEl.setAttribute("aria-expanded", "true");
+  state.reactionPickerTrigger = triggerEl;
+}
+
+function closeReactionPicker() {
+  const picker = els.reactionPicker;
+  if (!picker) return;
+  picker.hidden = true;
+  picker.innerHTML = "";
+  if (state.reactionPickerTrigger) {
+    state.reactionPickerTrigger.setAttribute("aria-expanded", "false");
+    state.reactionPickerTrigger = null;
+  }
+}
+
+// Adds or removes the signed-in user's own reaction, called both from
+// a reaction-picker emoji pick and from clicking an existing chip
+// under a bubble (see the click delegation on els.chatMessages
+// further down). Decides add-vs-remove purely from the message object
+// already in state.chatMessagesData — the same live data the open
+// chat's Firestore listener keeps current — so this never needs an
+// extra read before writing. A network failure here is reported the
+// same way every other message-level write in this file reports one
+// (see confirmAndDeleteMessage): a toast, no local optimistic state to
+// roll back, since renderChatMessages() only ever reflects what the
+// live listener has actually confirmed.
+async function handleToggleReaction(convId, message, emoji, uid) {
+  if (!convId || !message || !message.id || !emoji || !uid) return;
+  if (!REACTION_EMOJIS.includes(emoji)) return;
+  const existing = (message.reactions && message.reactions[emoji]) || [];
+  const hasReacted = Array.isArray(existing) && existing.includes(uid);
+  try {
+    await toggleMessageReaction(convId, message.id, emoji, uid, hasReacted);
+  } catch (e) {
+    console.error("HUM: failed to update reaction", e);
+    showToast(t("errors.network"), "error");
+  }
+}
+
 // Any click outside the open menu, any Escape press, or the page
 // scrolling/resizing closes it — a popover left open and stale is
-// worse than one that closes a little eagerly.
+// worse than one that closes a little eagerly. Handles BOTH the
+// action menu and the reaction picker in the same three listeners
+// (rather than a second near-identical set) since they're mutually
+// exclusive, page-level popovers with identical dismissal rules.
 document.addEventListener("click", (e) => {
-  if (!els.actionMenu || els.actionMenu.hidden) return;
-  if (els.actionMenu.contains(e.target)) return;
-  if (state.actionMenuTrigger && state.actionMenuTrigger.contains(e.target))
-    return;
-  closeActionMenu();
+  if (els.actionMenu && !els.actionMenu.hidden) {
+    const insideMenu = els.actionMenu.contains(e.target);
+    const onTrigger =
+      state.actionMenuTrigger && state.actionMenuTrigger.contains(e.target);
+    if (!insideMenu && !onTrigger) closeActionMenu();
+  }
+  if (els.reactionPicker && !els.reactionPicker.hidden) {
+    const insidePicker = els.reactionPicker.contains(e.target);
+    const onTrigger =
+      state.reactionPickerTrigger &&
+      state.reactionPickerTrigger.contains(e.target);
+    if (!insidePicker && !onTrigger) closeReactionPicker();
+  }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeActionMenu();
+  if (e.key === "Escape") {
+    closeActionMenu();
+    closeReactionPicker();
+  }
 });
-window.addEventListener("resize", closeActionMenu);
-window.addEventListener("scroll", closeActionMenu, true);
+window.addEventListener("resize", () => {
+  closeActionMenu();
+  closeReactionPicker();
+});
+window.addEventListener(
+  "scroll",
+  () => {
+    closeActionMenu();
+    closeReactionPicker();
+  },
+  true,
+);
 
 // Shows the shared confirm modal and resolves `true`/`false` depending
 // on which button (or backdrop/Escape, treated as cancel) the person
@@ -4804,16 +5202,35 @@ async function openProfileView(username, navigate) {
     if (navigate) openMobileDetail();
     return;
   }
+  // Switch to the profile panel immediately with a skeleton rather
+  // than waiting on findUserByUsername first — otherwise the panel
+  // stays on whatever was showing before with no loading feedback at
+  // all until the fetch resolves. Cleared to null so nothing (e.g.
+  // the "Message" button wiring, which checks state.viewingUsername)
+  // acts on stale data while this load is in flight.
+  state.viewingUsername = null;
+  state.viewingUser = null;
+  els.mainProfileView.innerHTML = profileHeroSkeletonMarkup();
+  clearPresenceWatchers("profileView");
+  setMainView("profileView");
+  if (navigate) openMobileDetail();
+
   let user;
   try {
     user = await findUserByUsername(username);
   } catch (e) {
     console.error("HUM: failed to load profile", e);
     showToast(t("errors.network"), "error");
+    if (state.mainView === "profileView" && !state.viewingUser) {
+      els.mainProfileView.innerHTML = profileViewErrorMarkup(t("errors.network"));
+    }
     return;
   }
   if (!user) {
     showToast(t("errors.userNotFound"), "error");
+    if (state.mainView === "profileView" && !state.viewingUser) {
+      els.mainProfileView.innerHTML = profileViewErrorMarkup(t("errors.userNotFound"));
+    }
     return;
   }
   state.viewingUsername = user.username;
@@ -5134,6 +5551,50 @@ els.chatMessages.addEventListener("click", (e) => {
     if (!message) return;
     const convId = conversationId(me.uid, other.uid);
     openActionMenu(menuBtn, buildMessageActions(convId, message, isOwn));
+    return;
+  }
+
+  // "+ react" trigger — opens the six-emoji picker for this message
+  // (see openReactionPicker). Present on every non-deleted message
+  // regardless of type (text/voice/image/file), same as the "⋮" menu
+  // button just above.
+  const reactBtn = e.target.closest("[data-msg-react-btn]");
+  if (reactBtn) {
+    e.stopPropagation();
+    const me = currentUser();
+    const other = state.activeChatUser;
+    const msgRow = reactBtn.closest(".chat-msg");
+    if (!me || !other || !msgRow) return;
+    const messageId = msgRow.getAttribute("data-msg-id");
+    const message = (state.chatMessagesData || []).find(
+      (m) => m.id === messageId,
+    );
+    if (!message) return;
+    const convId = conversationId(me.uid, other.uid);
+    openReactionPicker(reactBtn, convId, message, me.uid);
+    return;
+  }
+
+  // An existing reaction chip under a bubble — clicking it toggles
+  // the signed-in user's OWN reaction for that exact emoji (see
+  // reactionsBarMarkup/handleToggleReaction): adds it if they're not
+  // already part of that chip's count, removes it if they are. Never
+  // affects any other user's reaction on the same emoji.
+  const reactionChip = e.target.closest("[data-reaction-chip]");
+  if (reactionChip) {
+    e.stopPropagation();
+    const me = currentUser();
+    const other = state.activeChatUser;
+    const msgRow = reactionChip.closest(".chat-msg");
+    if (!me || !other || !msgRow) return;
+    const messageId = msgRow.getAttribute("data-msg-id");
+    const message = (state.chatMessagesData || []).find(
+      (m) => m.id === messageId,
+    );
+    if (!message) return;
+    const convId = conversationId(me.uid, other.uid);
+    const emoji = reactionChip.getAttribute("data-reaction-emoji");
+    handleToggleReaction(convId, message, emoji, me.uid);
     return;
   }
 
