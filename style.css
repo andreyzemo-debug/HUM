@@ -1,5 +1,33 @@
 /* ===================================================================
    HUM — design tokens
+
+   THEME SYSTEM
+   Every visual surface in HUM (backgrounds, panels, bubbles, buttons,
+   menus, inputs, skeletons, mobile nav, modals/lightbox) is painted
+   from this single set of custom properties. A mode is nothing more
+   than a [data-theme="…"] block overriding these variables — no
+   component CSS below ever hardcodes a mode-specific color, so
+   adding/adjusting a mode never touches component rules. HUM ships
+   exactly five modes — dark, light, sakura, volcano, forest — chosen
+   from one compact "Appearance" picker in Settings; sakura/volcano/
+   forest also drive an animated chat background (see .chat-wallpaper
+   further down), dark/light don't.
+
+   Conceptual → actual variable mapping (kept close to HUM's existing
+   naming instead of introducing a parallel set):
+     bg-primary    → --bg
+     bg-secondary  → --bg-elevated
+     bg-tertiary   → --surface-active
+     surface       → --surface
+     surface-hover → --surface-hover
+     text-primary  → --text
+     text-secondary→ --text-muted
+     border        → --border
+     accent        → --accent / --accent-strong / --accent-soft
+     message-incoming / message-outgoing → defined below, aliasing
+       --surface / --accent so bubble colors stay in sync with a theme
+       automatically without per-theme repetition.
+     shadow        → --shadow-soft
 =================================================================== */
 :root{
   --bg:#12141b;
@@ -14,11 +42,17 @@
   --accent:#7c9eff;
   --accent-strong:#a8bfff;
   --accent-soft:rgba(124,158,255,.14);
+  /* Text color placed on top of a raw --accent fill (buttons, own
+     message bubbles, active tab pills, etc). Each theme can override
+     this if its accent hue is too dark for the default near-black. */
+  --accent-contrast:#0d0f14;
   --gold:#f5b942;
   --gold-soft:rgba(245,185,66,.16);
   --danger:#ff6b6b;
   --danger-soft:rgba(255,107,107,.12);
   --success:#4ade80;
+  --message-incoming:var(--surface);
+  --message-outgoing:var(--accent);
   --radius-sm:10px;
   --radius-md:16px;
   --radius-lg:26px;
@@ -32,6 +66,67 @@
   --composer-h:44px;
 }
 
+/* ---------- Sakura — plum-black, warm pink accent ---------- */
+[data-theme="sakura"]{
+  --bg:#180f14;
+  --bg-elevated:#20141b;
+  --surface:#2a1b23;
+  --surface-hover:#35222c;
+  --surface-active:#402935;
+  --border:#3a2530;
+  --text:#f7ecf1;
+  --text-muted:#b995a3;
+  --text-faint:#755763;
+  --accent:#f2789c;
+  --accent-strong:#f6a0bb;
+  --accent-soft:rgba(242,120,156,.16);
+  --accent-contrast:#1c0f14;
+  --gold:#f5b942;
+  --gold-soft:rgba(245,185,66,.16);
+  --shadow-soft:0 12px 40px rgba(10,0,6,.5);
+}
+
+/* ---------- Volcano — charcoal-black, glowing orange accent ---------- */
+[data-theme="volcano"]{
+  --bg:#160d09;
+  --bg-elevated:#1e130c;
+  --surface:#271a11;
+  --surface-hover:#332216;
+  --surface-active:#402b1a;
+  --border:#3a2617;
+  --text:#f7ece3;
+  --text-muted:#c2a08c;
+  --text-faint:#7d6252;
+  --accent:#ff8a3d;
+  --accent-strong:#ffab6b;
+  --accent-soft:rgba(255,138,61,.16);
+  --accent-contrast:#1a0d05;
+  --gold:#ffb347;
+  --gold-soft:rgba(255,179,71,.16);
+  --shadow-soft:0 12px 40px rgba(20,4,0,.5);
+}
+
+/* ---------- Forest — deep green, mint accent ---------- */
+[data-theme="forest"]{
+  --bg:#0d1712;
+  --bg-elevated:#122019;
+  --surface:#192b21;
+  --surface-hover:#20372b;
+  --surface-active:#274433;
+  --border:#24382c;
+  --text:#eaf3ec;
+  --text-muted:#93ac9c;
+  --text-faint:#546b5c;
+  --accent:#57d38d;
+  --accent-strong:#86e0ac;
+  --accent-soft:rgba(87,211,141,.16);
+  --accent-contrast:#0a1c12;
+  --gold:#e8c04a;
+  --gold-soft:rgba(232,192,74,.16);
+  --shadow-soft:0 12px 40px rgba(0,10,4,.5);
+}
+
+/* ---------- Light — HUM's existing light theme ---------- */
 [data-theme="light"]{
   --bg:#f4f3ef;
   --bg-elevated:#ffffff;
@@ -45,6 +140,7 @@
   --accent:#4f6fe0;
   --accent-strong:#3b57c4;
   --accent-soft:rgba(79,111,224,.1);
+  --accent-contrast:#ffffff;
   --gold:#c98a1f;
   --gold-soft:rgba(201,138,31,.14);
   --shadow-soft:0 12px 34px rgba(30,25,10,.1);
@@ -136,7 +232,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 }
 .btn:active{transform:scale(.97);}
 .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
-.btn--primary{background:var(--accent);color:#0d0f14;}
+.btn--primary{background:var(--accent);color:var(--accent-contrast);}
 .btn--primary:hover{background:var(--accent-strong);}
 .btn--ghost{background:transparent;border-color:var(--border);color:var(--text);}
 .btn--ghost:hover{background:var(--surface-hover);}
@@ -284,7 +380,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .auth-card{width:100%;max-width:400px;}
 .auth-tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px;margin-bottom:30px;}
 .auth-tab{flex:1;border:none;background:none;padding:10px 14px;border-radius:999px;font-weight:700;font-size:13.5px;color:var(--text-muted);cursor:pointer;transition:all .18s ease;}
-.auth-tab.is-active{background:var(--accent);color:#0d0f14;}
+.auth-tab.is-active{background:var(--accent);color:var(--accent-contrast);}
 .auth-form__title{font-size:26px;margin-bottom:6px;}
 .auth-form__subtitle{color:var(--text-muted);font-size:14px;margin-bottom:26px;display:block;}
 .auth-switch{text-align:center;font-size:13.5px;color:var(--text-muted);margin-top:18px;}
@@ -426,20 +522,285 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .lang-option.is-active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-strong);}
 .lang-option__code{font-family:var(--font-mono);font-weight:700;color:var(--gold);font-size:12px;}
 
-.theme-toggle{display:inline-flex;background:var(--surface);border:1.5px solid var(--border);border-radius:999px;padding:4px;}
-.theme-toggle__btn{border:none;background:none;padding:9px 20px;border-radius:999px;font-weight:700;font-size:13px;color:var(--text-muted);cursor:pointer;}
-.theme-toggle__btn.is-active{background:var(--accent);color:#0d0f14;}
+/* ===================================================================
+   APPEARANCE (Settings → Appearance)
+   ONE compact section, exactly 5 modes: Dark, Light, Sakura, Volcano,
+   Forest. Each mode is both a color theme (CSS variables, see the
+   [data-theme] blocks above) AND — for Sakura/Volcano/Forest — an
+   animated chat background (see .chat-wallpaper further down);
+   picking a card drives both at once via applyTheme() in app.js.
+   Cards are intentionally small: an icon over a tiny animated scene,
+   a name, and a check badge — no descriptions, no second section.
+=================================================================== */
+.settings-group--appearance{max-width:620px;}
+.appearance-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px;
+  align-items:start;
+}
+.appearance-card{
+  position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;
+  border:1.5px solid var(--border);border-radius:14px;
+  padding:6px 6px 8px;cursor:pointer;color:var(--text);font-family:inherit;
+  transition:transform .16s cubic-bezier(.2,.8,.2,1),border-color .16s ease,box-shadow .16s ease,background .16s ease;
+  /* Safety clamp: the card's height is meant to come purely from its
+     own compact content (a 46px preview + one line of text). Nothing
+     here should ever need more room than that, so this cap guards
+     against the card being stretched tall by an unrelated ancestor
+     rule (flex/grid stretch, a stray height:100%, etc.) instead of
+     silently growing to fill available space. */
+  max-height:96px;
+  /* Subtle glass surface: a slightly translucent tint of the theme's
+     own --surface color plus a soft blur of whatever sits behind the
+     settings panel. background:var(--surface) is declared first as a
+     fully-opaque fallback for browsers without color-mix()/backdrop-
+     filter support — those simply keep the solid rule below and never
+     see the (unsupported) translucent ones. */
+  background:var(--surface);
+  background:color-mix(in srgb,var(--surface) 72%,transparent);
+  backdrop-filter:blur(10px) saturate(140%);
+  -webkit-backdrop-filter:blur(10px) saturate(140%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+}
+.appearance-card:hover{transform:translateY(-1px) scale(1.015);border-color:var(--accent);}
+.appearance-card:active{transform:translateY(0) scale(1);}
+.appearance-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.appearance-card.is-active{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+.appearance-card__preview{
+  position:relative;display:flex;align-items:flex-end;justify-content:flex-end;
+  width:100%;height:46px;border-radius:9px;overflow:hidden;background:#12141b;flex:none;
+  flex-shrink:0;
+}
+.appearance-card__scene{position:absolute;inset:0;}
+.appearance-card__icon{
+  position:relative;font-size:14px;line-height:1;margin:0 4px 3px 0;
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));
+}
+.appearance-card__name{
+  font-size:11px;font-weight:700;line-height:1.2;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:100%;
+}
+.appearance-card__check{
+  position:absolute;top:5px;right:5px;width:16px;height:16px;padding:3px;box-sizing:border-box;
+  border-radius:50%;background:var(--accent);color:var(--accent-contrast);
+  opacity:0;transform:scale(.6);transition:opacity .16s ease,transform .16s ease;
+  box-shadow:0 1px 4px rgba(0,0,0,.3);
+}
+.appearance-card.is-active .appearance-card__check{opacity:1;transform:scale(1);}
+
+/* ---------- Per-mode preview scenes (tiny, CSS-only) ---------- */
+.appearance-card[data-theme="dark"] .appearance-card__scene{
+  background:
+    radial-gradient(60% 70% at 75% 15%,rgba(124,158,255,.35),transparent 65%),
+    linear-gradient(180deg,#171a24,#0e1017);
+}
+.appearance-card[data-theme="light"] .appearance-card__scene{
+  background:linear-gradient(155deg,#ffffff,#eef0fb 55%,#e4e9fb);
+}
+.appearance-card[data-theme="light"] .appearance-card__icon{filter:drop-shadow(0 1px 2px rgba(0,0,0,.15));}
+.appearance-card[data-theme="sakura"] .appearance-card__scene{
+  background:
+    radial-gradient(70% 60% at 70% 10%,rgba(255,181,140,.4),transparent 60%),
+    linear-gradient(180deg,#241620,#170e15);
+}
+.appearance-card[data-theme="sakura"] .appearance-card__scene::before,
+.appearance-card[data-theme="sakura"] .appearance-card__scene::after{
+  content:'';position:absolute;width:4px;height:4px;border-radius:70% 30% 65% 35%/60% 40% 60% 40%;
+  background:linear-gradient(135deg,#ffc9de,#ff9ec2);animation:appearance-petal-fall 4.5s linear infinite;
+}
+.appearance-card[data-theme="sakura"] .appearance-card__scene::before{left:25%;top:-15%;animation-delay:0s;}
+.appearance-card[data-theme="sakura"] .appearance-card__scene::after{left:65%;top:-15%;animation-delay:2.1s;}
+.appearance-card[data-theme="volcano"] .appearance-card__scene{
+  background:radial-gradient(60% 55% at 50% 100%,rgba(255,110,40,.55),transparent 62%),
+    linear-gradient(180deg,#1a0e0a,#0c0605);
+}
+.appearance-card[data-theme="volcano"] .appearance-card__scene::before{
+  content:'';position:absolute;left:50%;bottom:0;width:26px;height:16px;margin-left:-13px;
+  background:radial-gradient(circle,#ffb347,transparent 70%);
+  animation:appearance-glow-pulse 2.6s ease-in-out infinite;
+}
+.appearance-card[data-theme="forest"] .appearance-card__scene{
+  background:radial-gradient(60% 50% at 50% 100%,rgba(87,211,141,.24),transparent 70%),
+    linear-gradient(180deg,#14211a,#0a130e);
+}
+.appearance-card[data-theme="forest"] .appearance-card__scene::before,
+.appearance-card[data-theme="forest"] .appearance-card__scene::after{
+  content:'';position:absolute;width:5px;height:4px;border-radius:2px 8px;
+  background:#7fd99e;animation:appearance-leaf-fall 4s linear infinite;
+}
+.appearance-card[data-theme="forest"] .appearance-card__scene::before{left:30%;top:-15%;animation-delay:.4s;}
+.appearance-card[data-theme="forest"] .appearance-card__scene::after{left:68%;top:-15%;animation-delay:2.3s;}
+
+@keyframes appearance-petal-fall{
+  0%{transform:translateY(0) rotate(0deg);opacity:0;}
+  10%{opacity:.9;}
+  100%{transform:translateY(58px) translateX(10px) rotate(180deg);opacity:0;}
+}
+@keyframes appearance-leaf-fall{
+  0%{transform:translateY(0) rotate(0deg);opacity:0;}
+  10%{opacity:.9;}
+  100%{transform:translateY(58px) translateX(-8px) rotate(140deg);opacity:0;}
+}
+@keyframes appearance-glow-pulse{0%,100%{opacity:.7;transform:scale(1);}50%{opacity:1;transform:scale(1.1);}}
+
+@media (prefers-reduced-motion:reduce){
+  .appearance-card__scene::before,.appearance-card__scene::after{animation:none !important;}
+}
+@media (max-width:640px){
+  .appearance-grid{grid-template-columns:repeat(3,1fr);}
+}
+@media (max-width:420px){
+  .appearance-grid{grid-template-columns:repeat(2,1fr);}
+}
 
 /* ===================================================================
    CHAT VIEW (opened from a profile's "Message" button, or from the
    Chats list once a conversation exists)
 =================================================================== */
 .chat-view{
-  display:flex;flex-direction:column;overflow:hidden;
+  display:flex;flex-direction:column;overflow:hidden;position:relative;
 }
+
+/* ---------------------------------------------------------------
+   ANIMATED WALLPAPER — driven entirely by the single Appearance
+   picker above (no separate wallpaper setting): Sakura/Volcano/Forest
+   each carry their own animated chat background, Dark/Light show
+   none. Two stacked, absolutely positioned layers (scene, then a
+   theme-colored overlay for contrast) sit behind everything else in
+   .chat-view; .chat-header/.chat-blocked-notice/.chat-messages/
+   .chat-composer are explicitly stacked above them (z-index:1) and —
+   except for the transparent gaps in .chat-messages where the
+   wallpaper is meant to peek through behind bubbles — are opaque, so
+   the wallpaper can never cover message text, the header, or the
+   composer, and never intercepts clicks/scrolling (pointer-events:
+   none). prefers-reduced-motion freezes every animation via the
+   selector at the very end of this block — no re-render, no DOM
+   rebuild, just CSS.
+---------------------------------------------------------------- */
+.chat-wallpaper{
+  position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none;
+}
+.chat-wallpaper__scene{position:absolute;inset:0;}
+.chat-wallpaper__particles{position:absolute;inset:0;overflow:hidden;}
+.chat-wallpaper__overlay{
+  position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:var(--bg);opacity:.7;
+}
+.chat-header,.chat-blocked-notice,.chat-messages,.chat-composer{position:relative;z-index:1;}
+
+.chat-wallpaper[data-wallpaper="none"] .chat-wallpaper__scene{background:var(--bg);}
+
+/* ---------- Volcano: dark peaks, glowing lava, drifting smoke ---------- */
+.chat-wallpaper[data-wallpaper="volcano"] .chat-wallpaper__scene{
+  background:
+    radial-gradient(55% 45% at 50% 100%,rgba(255,110,40,.5),transparent 62%),
+    linear-gradient(180deg,#160b09 0%,#0c0605 55%,#050302 100%);
+}
+.chat-wallpaper[data-wallpaper="volcano"] .chat-wallpaper__scene::before{
+  /* mountain silhouette */
+  content:'';position:absolute;left:-5%;right:-5%;bottom:0;height:46%;
+  background:linear-gradient(180deg,#1c100c,#0a0503);
+  clip-path:polygon(0% 100%,0% 55%,12% 40%,22% 60%,34% 20%,46% 52%,58% 30%,68% 58%,80% 15%,90% 48%,100% 35%,100% 100%);
+}
+.chat-wallpaper[data-wallpaper="volcano"] .chat-wallpaper__scene::after{
+  /* lava glow at the crater, breathing slowly */
+  content:'';position:absolute;left:38%;bottom:18%;width:22%;height:14%;
+  background:radial-gradient(circle,rgba(255,170,60,.9),rgba(255,90,20,.4) 55%,transparent 75%);
+  filter:blur(2px);animation:wp-lava-glow 4s ease-in-out infinite;
+}
+.wallpaper-particle--ember{
+  position:absolute;bottom:12%;width:3px;height:3px;border-radius:50%;
+  background:#ffb347;box-shadow:0 0 6px 2px rgba(255,140,50,.8);
+  animation:wp-ember-rise linear infinite;
+}
+
+/* ---------- Sakura: tree silhouette, falling petals, dusk sky ---------- */
+.chat-wallpaper[data-wallpaper="sakura"] .chat-wallpaper__scene{
+  background:
+    radial-gradient(65% 45% at 75% 8%,rgba(255,178,150,.4),transparent 60%),
+    linear-gradient(180deg,#2c1522 0%,#1c0f1c 55%,#130a15 100%);
+}
+.chat-wallpaper[data-wallpaper="sakura"] .chat-wallpaper__scene::before{
+  /* branch, top-left corner */
+  content:'';position:absolute;left:-4%;top:-2%;width:46%;height:34%;
+  background:
+    radial-gradient(6px 6px at 30% 55%,rgba(255,197,213,.7),transparent 70%),
+    radial-gradient(5px 5px at 55% 35%,rgba(255,197,213,.6),transparent 70%),
+    radial-gradient(5px 5px at 70% 60%,rgba(255,197,213,.55),transparent 70%),
+    linear-gradient(115deg,transparent 46%,#241019 46% 52%,transparent 52%);
+  opacity:.9;
+}
+.wallpaper-particle--petal{
+  position:absolute;top:-8%;width:7px;height:7px;border-radius:70% 30% 65% 35%/60% 40% 60% 40%;
+  background:linear-gradient(135deg,#ffc9de,#ff9ec2);
+  animation:wp-petal-fall linear infinite;
+}
+
+/* ---------- Forest: dark woods, fog, and — the whole point of this
+   wallpaper — continuously falling leaves ---------- */
+.chat-wallpaper[data-wallpaper="forest"] .chat-wallpaper__scene{
+  background:
+    radial-gradient(60% 40% at 50% 100%,rgba(87,211,141,.14),transparent 70%),
+    linear-gradient(180deg,#15221a 0%,#0d1712 55%,#070c09 100%);
+}
+.chat-wallpaper[data-wallpaper="forest"] .chat-wallpaper__scene::before{
+  /* tree trunks */
+  content:'';position:absolute;inset:0;
+  background:
+    linear-gradient(90deg,transparent 6%,#0a120d 6% 9%,transparent 9%),
+    linear-gradient(90deg,transparent 27%,#0a120d 27% 30%,transparent 30%),
+    linear-gradient(90deg,transparent 63%,#0a120d 63% 66%,transparent 66%),
+    linear-gradient(90deg,transparent 85%,#0a120d 85% 88%,transparent 88%);
+  opacity:.7;
+}
+.chat-wallpaper[data-wallpaper="forest"] .chat-wallpaper__scene::after{
+  /* drifting fog band */
+  content:'';position:absolute;left:-15%;right:-15%;bottom:8%;height:30%;
+  background:linear-gradient(90deg,transparent,rgba(220,235,225,.1),transparent);
+  filter:blur(4px);animation:wp-fog-drift 16s ease-in-out infinite;
+}
+.wallpaper-particle--leaf{
+  position:absolute;top:-6%;width:8px;height:6px;border-radius:1px 8px;
+  background:linear-gradient(135deg,#7fd99e,#4a9a68);
+  animation:wp-leaf-fall linear infinite;
+}
+
+/* ---------- Particle + scene keyframes ---------- */
+@keyframes wp-lava-glow{0%,100%{opacity:.75;transform:scale(1);}50%{opacity:1;transform:scale(1.06);}}
+@keyframes wp-ember-rise{
+  0%{transform:translateY(0) translateX(0);opacity:0;}
+  10%{opacity:1;}
+  100%{transform:translateY(-120px) translateX(6px);opacity:0;}
+}
+@keyframes wp-petal-fall{
+  0%{transform:translateY(0) translateX(0) rotate(0deg);opacity:0;}
+  8%{opacity:.9;}
+  100%{transform:translateY(320px) translateX(30px) rotate(220deg);opacity:0;}
+}
+@keyframes wp-fog-drift{0%,100%{transform:translateX(-6%);}50%{transform:translateX(6%);}}
+@keyframes wp-leaf-fall{
+  0%{transform:translateY(0) translateX(0) rotate(0deg);opacity:0;}
+  8%{opacity:.9;}
+  50%{transform:translateY(160px) translateX(-22px) rotate(110deg);}
+  100%{transform:translateY(320px) translateX(10px) rotate(240deg);opacity:0;}
+}
+
+/* prefers-reduced-motion: freeze every wallpaper animation and hide
+   the JS particle layer, but keep the static scene gradients so the
+   chosen mode is still visibly different. */
+@media (prefers-reduced-motion:reduce){
+  .chat-wallpaper .chat-wallpaper__scene,
+  .chat-wallpaper .chat-wallpaper__scene::before,
+  .chat-wallpaper .chat-wallpaper__scene::after{animation:none !important;}
+  .chat-wallpaper__particles{display:none;}
+}
+
 .chat-header{
   display:flex;align-items:center;gap:12px;padding:18px 40px;flex:none;
-  border-bottom:1px solid var(--border);cursor:pointer;background:none;
+  border-bottom:1px solid var(--border);cursor:pointer;background:var(--bg-elevated);
 }
 .chat-header .avatar{width:42px;height:42px;font-size:15px;}
 .chat-header__info{min-width:0;}
@@ -464,11 +825,11 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 .chat-msg--own{align-self:flex-end;align-items:flex-end;}
 .chat-msg--theirs{align-self:flex-start;align-items:flex-start;}
 .chat-msg__bubble{
-  background:var(--surface);border:1px solid var(--border);color:var(--text);
+  background:var(--message-incoming);border:1px solid var(--border);color:var(--text);
   padding:10px 14px;border-radius:var(--radius-md);font-size:14.5px;line-height:1.5;
   word-break:break-word;white-space:pre-wrap;
 }
-.chat-msg--own .chat-msg__bubble{background:var(--accent);color:#0d0f14;border-color:transparent;}
+.chat-msg--own .chat-msg__bubble{background:var(--message-outgoing);color:var(--accent-contrast);border-color:transparent;}
 .chat-msg__time{font-size:11px;color:var(--text-faint);margin-top:4px;padding:0 2px;display:inline-flex;align-items:center;gap:4px;}
 /* Read receipts reuse this same meta line (see renderChatMessages in
    app.js) — no new bubble element, just an inline mark after the
@@ -649,7 +1010,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   display:inline-flex;align-items:center;justify-content:center;
   background:rgba(255,255,255,.16);color:inherit;
 }
-.chat-msg--theirs .chat-voice-play{background:var(--accent);color:#0d0f14;}
+.chat-msg--theirs .chat-voice-play{background:var(--accent);color:var(--accent-contrast);}
 .chat-voice-play__icon-pause{display:none;}
 .chat-voice-play.is-playing .chat-voice-play__icon-play{display:none;}
 .chat-voice-play.is-playing .chat-voice-play__icon-pause{display:block;}
@@ -682,7 +1043,7 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   flex:none;width:38px;height:38px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
   background:rgba(255,255,255,.16);color:inherit;font-size:10.5px;font-weight:800;letter-spacing:.2px;
 }
-.chat-msg--theirs .chat-file__icon{background:var(--accent);color:#0d0f14;}
+.chat-msg--theirs .chat-file__icon{background:var(--accent);color:var(--accent-contrast);}
 .chat-file__info{flex:1;min-width:0;}
 .chat-file__name{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .chat-file__meta{font-size:11.5px;opacity:.75;margin-top:2px;font-family:var(--font-mono);}
@@ -748,6 +1109,20 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   .auth-panel{padding-top:80px;}
 }
 
+/* ---------------------------------------------------------------
+   TABLET (roughly 768px–1024px, e.g. landscape/portrait tablets and
+   large foldables). Keeps HUM's normal three-pane desktop layout —
+   nav rail + list + chat — rather than collapsing to the phone's
+   single-pane + bottom-nav pattern, just with tighter proportions so
+   the list and chat panes both stay comfortable at this width.
+---------------------------------------------------------------- */
+@media (min-width:861px) and (max-width:1024px){
+  :root{--nav-rail-w:72px;--panel-list-w:280px;}
+  .chat-header,.chat-composer{padding-left:24px;padding-right:24px;}
+  .chat-messages{padding-left:24px;padding-right:24px;}
+  .main-header,.settings-group,.profile-layout,.profile-hero,.profile-meta{padding-left:24px;padding-right:24px;}
+}
+
 @media (max-width:860px){
   .app-shell{grid-template-columns:1fr;grid-template-rows:1fr auto;height:100dvh;height:var(--app-vh,100dvh);}
   .nav-rail{display:none;}
@@ -765,14 +1140,22 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   .panel-list{
     position:fixed;top:0;left:0;right:0;z-index:5;border-right:none;
     height:calc(var(--app-vh,100dvh) - var(--mobile-nav-h) - env(safe-area-inset-bottom));
+    padding-top:env(safe-area-inset-top);
     padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
     transform:translateX(0);transition:transform .25s ease;
   }
   .panel-main{
     position:fixed;top:0;left:0;right:0;z-index:6;background:var(--bg);
     height:calc(var(--app-vh,100dvh) - var(--mobile-nav-h) - env(safe-area-inset-bottom));
+    padding-top:env(safe-area-inset-top);
     padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
     transform:translateX(100%);transition:transform .25s ease;
+    /* Lets the edge-swipe-back gesture (see initSwipeNavigation in
+       app.js) read touch coordinates reliably without the browser's
+       own back/forward-swipe navigation or text-selection gestures
+       fighting it; vertical scrolling inside the panel is unaffected
+       since pan-y stays allowed. */
+    touch-action:pan-y;
   }
   .app-shell.is-detail-open .panel-main{transform:translateX(0);}
   .app-shell.is-detail-open .panel-list{transform:translateX(-6%);opacity:.4;pointer-events:none;}
@@ -785,12 +1168,20 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
     background:var(--bg-elevated);border-top:1px solid var(--border);
     align-items:center;justify-content:space-around;
   }
-  .mobile-nav__item{background:none;border:none;color:var(--text-faint);padding:10px;border-radius:12px;}
+  .mobile-nav__item{
+    background:none;border:none;color:var(--text-faint);padding:10px;border-radius:12px;
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    min-width:44px;min-height:44px;justify-content:center;
+  }
   .mobile-nav__item svg{width:22px;height:22px;}
   .mobile-nav__item.is-active{color:var(--accent);}
   .main-header,.settings-group,.profile-layout,.profile-hero,.profile-meta{padding-left:22px;padding-right:22px;}
-  .chat-header,.chat-messages,.chat-composer{padding-left:22px;padding-right:22px;}
+  .chat-header{padding-left:22px;padding-right:22px;padding-top:calc(18px + env(safe-area-inset-top));}
+  .chat-messages,.chat-composer{padding-left:22px;padding-right:22px;}
   .chat-msg{max-width:80%;}
+  /* Keep the header from ever growing tall enough to eat into message
+     space — name/handle already ellipsis, this just caps the row. */
+  .chat-header{min-height:0;max-height:76px;}
 }
 
 @media (max-width:480px){
@@ -800,6 +1191,20 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
   .chat-header,.chat-messages,.chat-composer{padding-left:14px;padding-right:14px;}
   .chat-msg{max-width:88%;}
   :root{--composer-h:40px;}
+}
+
+/* ---------------------------------------------------------------
+   SMALL PHONES (≤360px, e.g. older/compact Android devices). Only
+   the few places that still feel cramped at 480px get tightened
+   further — everything else already scales down cleanly.
+---------------------------------------------------------------- */
+@media (max-width:360px){
+  .chat-header,.chat-messages,.chat-composer{padding-left:10px;padding-right:10px;}
+  .chat-composer{gap:6px;}
+  .chat-msg{max-width:92%;}
+  .main-header,.settings-group{padding-left:14px;padding-right:14px;}
+  .appearance-grid{grid-template-columns:repeat(2,1fr);gap:6px;}
+  :root{--composer-h:38px;}
 }
 
 .back-btn{
@@ -885,6 +1290,45 @@ svg{display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:
 @media (max-width:480px){
   .chat-blocked-notice{padding-left:14px;padding-right:14px;}
 }
+
+/* ===================================================================
+   Chat "editing" bar (shown above the composer while editing one of
+   the signed-in user's own text messages — see startEditMessage/
+   cancelEditMessage/saveEditedMessage in app.js). Same compact-bar
+   language as .chat-blocked-notice just above, but sits directly on
+   top of the composer and left-aligns its content instead of
+   centering, since it's a working-state indicator rather than a
+   passive notice.
+=================================================================== */
+.chat-edit-bar{
+  flex:none;display:flex;align-items:center;gap:8px;
+  padding:9px 40px;font-size:12.5px;color:var(--accent);background:var(--surface);
+  border-top:1px solid var(--border);
+}
+.chat-edit-bar[hidden]{display:none;}
+.chat-edit-bar__icon{flex:none;color:var(--accent);}
+.chat-edit-bar__label{flex:1;min-width:0;font-weight:600;}
+.chat-edit-bar__cancel{margin-left:auto;flex:none;}
+@media (max-width:860px){
+  .chat-edit-bar{padding-left:22px;padding-right:22px;}
+}
+@media (max-width:480px){
+  .chat-edit-bar{padding-left:14px;padding-right:14px;}
+}
+
+/* Composer send button while it's standing in for "Save" during a
+   message edit (see saveEditedMessage/startEditMessage in app.js) —
+   same size/shape as the normal send button, just an accent outline so
+   it visibly reads as a distinct action while editing. */
+.chat-composer__send.is-editing{
+  background:var(--accent);color:var(--accent-contrast);
+}
+
+/* Subtle "edited" tag next to a text message's timestamp (see
+   renderChatMessages in app.js) — small and unobtrusive per spec,
+   reusing .chat-msg__time's existing font-size rather than introducing
+   a new one. */
+.chat-msg__edited-tag{color:var(--text-faint);font-style:italic;}
 
 /* ===================================================================
    Blocked users list (Settings → Privacy)

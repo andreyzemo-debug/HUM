@@ -176,10 +176,12 @@
 //                  && request.auth.uid in conversationDoc(convId).data.participants
 //                  && request.resource.data.from == request.auth.uid
 //                  && !isBlockedPair(request.auth.uid, otherParticipant(convId, request.auth.uid));
-//                // Three, and ONLY three, shapes of update are ever
+//                // Four, and ONLY four, shapes of update are ever
 //                // allowed on a message doc — every other field
 //                // (from/text/ts/type/voicePath/…) is permanently
-//                // immutable once created, in every one of them:
+//                // immutable once created, in every one of them except
+//                // (E), which is the one narrow, explicit exception
+//                // that lets `text` itself change:
 //                //   (A) Read receipts — RECIPIENT only (never the
 //                //       sender, which is what stops a sender forging
 //                //       their own "read" state), touching readAt and
@@ -232,6 +234,32 @@
 //                    //     key outside the six supported emoji.
 //                    (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
 //                      && isValidReactionsChange(resource.data, request.resource.data, request.auth.uid))
+//                    ||
+//                    // (E) Edit message — the message's own SENDER only,
+//                    //     on a plain TEXT message only (no `type` field
+//                    //     at all — voice/image/file messages always
+//                    //     carry one, see the schema notes below — so
+//                    //     this branch can never touch their text), and
+//                    //     never on one already tombstoned via "delete
+//                    //     for everyone". Touches ONLY `text` and
+//                    //     `edited` — every other field (from/ts/type/
+//                    //     voicePath/attachment fields/reactions/readAt/
+//                    //     deletedFor/deletedForEveryone) is guaranteed
+//                    //     unchanged simply by NOT being in affectedKeys.
+//                    //     `edited` may only ever be set to literal
+//                    //     `true` (never back to false) — a one-way flag
+//                    //     exactly like deletedForEveryone in (C) above.
+//                    //     `text` must be a non-empty string (the client
+//                    //     — see saveEditedMessage in app.js — also
+//                    //     trims and blocks whitespace-only saves before
+//                    //     ever reaching this rule).
+//                    (request.auth.uid == resource.data.from
+//                      && !('type' in resource.data)
+//                      && !(('deletedForEveryone' in resource.data) && resource.data.deletedForEveryone == true)
+//                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text','edited'])
+//                      && request.resource.data.text is string
+//                      && request.resource.data.text.size() > 0
+//                      && request.resource.data.edited == true)
 //                  );
 //                allow delete: if false;
 //              }
@@ -322,6 +350,18 @@
 //          in Firestore untouched, renderChatMessages() simply stops
 //          displaying it once deletedForEveryone is set, same as it
 //          already does for the original bubble content.
+//        - conversations/{convId}/messages/{msgId}.edited: true — a
+//          one-way flag the message's own SENDER (and only the sender)
+//          can set, exclusively by rewriting `text` itself via
+//          saveEditedMessage()/updateMessageText() in app.js (see rule
+//          branch (E) above). Only ever present on a plain text message
+//          (no `type` field) that isn't already tombstoned. Once set,
+//          renderChatMessages() shows a small "edited" tag next to the
+//          message's timestamp — the same smallest-possible-write,
+//          reuse-the-existing-listener shape every other message-level
+//          feature in this file already follows, nothing about the
+//          message's id/sender/timestamp/type/attachments/reactions/
+//          readAt/deletedFor/deletedForEveryone is ever touched by it.
 //
 //   6. Realtime Database → Rules, paste EXACTLY this (separate product
 //      from Firestore, separate console tab, separate rules language —
@@ -2079,6 +2119,35 @@ async function deleteMessageForEveryone(convId, message) {
 }
 
 /* ===================================================================
+   SECTION: EDIT MESSAGE (text messages only)
+   Mirrors deleteMessageForMe's setDoc+merge shape exactly — the
+   smallest possible write, landing on the exact same message doc the
+   open chat's live listener is already subscribed to, so no separate
+   realtime listener is ever needed for edits (see
+   watchConversationMessages/renderChatMessages). Only ever called
+   after startEditMessage()/saveEditedMessage() (see the UI section
+   further down) have already verified the caller is the message's own
+   sender and it's a plain text message; the Firestore rule enforces
+   both restrictions server-side regardless, so this can never succeed
+   for someone else's message, a voice/image/file message, or a
+   tombstoned one even if that client-side check were somehow bypassed.
+   `edited: true` is a one-way flag, same spirit as
+   deletedForEveryone — once a message has been edited it stays marked
+   as edited, it never goes back to unedited.
+=================================================================== */
+async function updateMessageText(convId, msgId, text) {
+  requireFirebaseConfig();
+  await setDoc(
+    doc(db, "conversations", convId, "messages", msgId),
+    {
+      text,
+      edited: true,
+    },
+    { merge: true },
+  );
+}
+
+/* ===================================================================
    SECTION: MESSAGE REACTIONS
    Reactions live directly on the existing message document as a
    `reactions` map — no new collection, no new document, no new
@@ -2390,6 +2459,12 @@ const translations = {
       receiptSent: "Sent",
       receiptRead: "Read",
       messageDeleted: "This message was deleted",
+      editedTag: "edited",
+      edit: {
+        editingLabel: "Editing message",
+        save: "Save",
+        emptyError: "Message can't be empty.",
+      },
       voice: {
         record: "Record voice message",
         stop: "Stop",
@@ -2433,6 +2508,7 @@ const translations = {
       remove: "Remove",
       block: "Block",
       unblock: "Unblock",
+      edit: "Edit",
       deleteForMe: "Delete for me",
       deleteForEveryone: "Delete for everyone",
     },
@@ -2458,9 +2534,12 @@ const translations = {
       language: "Language",
       languageHint: "Choose the language HUM speaks to you in.",
       appearance: "Appearance",
-      appearanceHint: "Switch between a dark or light signal.",
-      dark: "Dark",
-      light: "Light",
+      appearanceHint: "Pick how HUM looks and feels.",
+      modeDark: "Dark",
+      modeLight: "Light",
+      modeSakura: "Sakura",
+      modeVolcano: "Volcano",
+      modeForest: "Forest",
       privacy: "Privacy",
       privacyHint:
         "People you've blocked can't message you, and you won't see them in search.",
@@ -2479,6 +2558,7 @@ const translations = {
       userUnblocked: "{name} has been unblocked.",
       messageDeletedForMe: "Message deleted for you.",
       messageDeletedEveryone: "Message deleted.",
+      messageEdited: "Message updated.",
     },
   },
 
@@ -2602,6 +2682,12 @@ const translations = {
       receiptSent: "Отправлено",
       receiptRead: "Прочитано",
       messageDeleted: "Это сообщение удалено",
+      editedTag: "изменено",
+      edit: {
+        editingLabel: "Редактирование сообщения",
+        save: "Сохранить",
+        emptyError: "Сообщение не может быть пустым.",
+      },
       voice: {
         record: "Записать голосовое сообщение",
         stop: "Стоп",
@@ -2645,6 +2731,7 @@ const translations = {
       remove: "Удалить",
       block: "Заблокировать",
       unblock: "Разблокировать",
+      edit: "Редактировать",
       deleteForMe: "Удалить у меня",
       deleteForEveryone: "Удалить у всех",
     },
@@ -2669,9 +2756,12 @@ const translations = {
       language: "Язык",
       languageHint: "Выберите язык интерфейса HUM.",
       appearance: "Внешний вид",
-      appearanceHint: "Переключение между тёмным и светлым режимом.",
-      dark: "Тёмная",
-      light: "Светлая",
+      appearanceHint: "Выберите облик и настроение HUM.",
+      modeDark: "Тёмная",
+      modeLight: "Светлая",
+      modeSakura: "Сакура",
+      modeVolcano: "Вулкан",
+      modeForest: "Лес",
       privacy: "Приватность",
       privacyHint:
         "Заблокированные пользователи не смогут писать вам и не будут видны в поиске.",
@@ -2690,6 +2780,7 @@ const translations = {
       userUnblocked: "{name} разблокирован(а).",
       messageDeletedForMe: "Сообщение удалено у вас.",
       messageDeletedEveryone: "Сообщение удалено.",
+      messageEdited: "Сообщение обновлено.",
     },
   },
 
@@ -2815,6 +2906,12 @@ const translations = {
       receiptSent: "Yuborildi",
       receiptRead: "Oʻqildi",
       messageDeleted: "Bu xabar oʻchirildi",
+      editedTag: "tahrirlangan",
+      edit: {
+        editingLabel: "Xabarni tahrirlash",
+        save: "Saqlash",
+        emptyError: "Xabar boʻsh boʻlishi mumkin emas.",
+      },
       voice: {
         record: "Ovozli xabar yozish",
         stop: "Toʻxtatish",
@@ -2858,6 +2955,7 @@ const translations = {
       remove: "Olib tashlash",
       block: "Bloklash",
       unblock: "Blokdan chiqarish",
+      edit: "Tahrirlash",
       deleteForMe: "Men uchun o‘chirish",
       deleteForEveryone: "Hamma uchun o‘chirish",
     },
@@ -2883,9 +2981,12 @@ const translations = {
       language: "Til",
       languageHint: "HUM siz bilan gaplashadigan tilni tanlang.",
       appearance: "Ko‘rinish",
-      appearanceHint: "Tungi yoki kunduzgi rejim orasida almashing.",
-      dark: "Tungi",
-      light: "Kunduzgi",
+      appearanceHint: "HUM qanday ko‘rinishi va kayfiyatini tanlang.",
+      modeDark: "Tungi",
+      modeLight: "Kunduzgi",
+      modeSakura: "Sakura",
+      modeVolcano: "Vulkan",
+      modeForest: "O‘rmon",
       privacy: "Maxfiylik",
       privacyHint:
         "Siz bloklagan foydalanuvchilar sizga yoza olmaydi va qidiruvda ko‘rinmaydi.",
@@ -2904,6 +3005,7 @@ const translations = {
       userUnblocked: "{name} blokdan chiqarildi.",
       messageDeletedForMe: "Xabar siz uchun oʻchirildi.",
       messageDeletedEveryone: "Xabar oʻchirildi.",
+      messageEdited: "Xabar yangilandi.",
     },
   },
 };
@@ -3781,6 +3883,16 @@ function renderChatMessages() {
       const receiptMarkup = isOwn
         ? `<span class="chat-msg__receipt${m.readAt ? " chat-msg__receipt--read" : ""}" title="${escapeHtml(t(m.readAt ? "chat.receiptRead" : "chat.receiptSent"))}">${m.readAt ? "✓✓" : "✓"}</span>`
         : "";
+      // Small "edited" tag next to the timestamp — only ever set on a
+      // text message that's actually gone through saveEditedMessage()
+      // (see updateMessageText above), never on voice/image/file
+      // messages or a tombstoned one (menuMarkup/reactBtnMarkup below
+      // already omit those entirely, and this reads the same
+      // isDeletedForEveryone guard for the same reason).
+      const editedTagMarkup =
+        m.edited === true && !isDeletedForEveryone
+          ? `<span class="chat-msg__edited-tag">${escapeHtml(t("chat.editedTag"))}</span>`
+          : "";
       // A tombstoned message shows "This message was deleted" in place
       // of its original content (text OR voice player OR attachment)
       // for BOTH participants — see deleteMessageForEveryone. The
@@ -3824,7 +3936,7 @@ function renderChatMessages() {
         <div class="chat-msg ${isOwn ? "chat-msg--own" : "chat-msg--theirs"}" data-msg-id="${escapeHtml(m.id || "")}" data-msg-own="${isOwn}">
           ${bubbleMarkup}
           ${reactionsMarkup}
-          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${receiptMarkup}${reactBtnMarkup}${menuMarkup}</div>
+          <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${editedTagMarkup}${receiptMarkup}${reactBtnMarkup}${menuMarkup}</div>
         </div>
       `;
     })
@@ -4076,6 +4188,8 @@ const els = {
   chatBlockedNotice: document.getElementById("chatBlockedNotice"),
   chatBlockedUnblockBtn: document.getElementById("chatBlockedUnblockBtn"),
   chatMessages: document.getElementById("chatMessages"),
+  chatEditBar: document.getElementById("chatEditBar"),
+  chatEditCancelBtn: document.getElementById("chatEditCancelBtn"),
   chatComposerForm: document.getElementById("chatComposerForm"),
   chatInput: document.getElementById("chatInput"),
   chatSendBtn: document.getElementById("chatSendBtn"),
@@ -4104,6 +4218,8 @@ const els = {
   settingsLogout: document.getElementById("settingsLogout"),
   settingsBlockedList: document.getElementById("settingsBlockedList"),
   themeToggle: document.getElementById("themeToggle"),
+  chatWallpaper: document.getElementById("chatWallpaper"),
+  chatWallpaperParticles: document.getElementById("chatWallpaperParticles"),
 
   actionMenu: document.getElementById("actionMenu"),
   reactionPicker: document.getElementById("reactionPicker"),
@@ -4170,6 +4286,15 @@ let state = {
   // Same tracking role as actionMenuTrigger, just for the reaction-emoji
   // popover (see openReactionPicker/closeReactionPicker).
   reactionPickerTrigger: null,
+
+  // Firestore message id currently being edited in the composer (see
+  // startEditMessage/cancelEditMessage/saveEditedMessage below), or
+  // null when the composer is in its normal "send" state. Cleared any
+  // time the composer could otherwise end up pointing at a message
+  // from a conversation that's no longer open (see openChat/
+  // leaveActiveChat/stopAllConversationWatchers) so it can never leak
+  // across chats.
+  editingMessageId: null,
 };
 
 // Stops any live Firestore listeners this device has open — called on
@@ -4198,6 +4323,11 @@ function stopAllConversationWatchers() {
   state.myBlockedUids = new Set();
   state.blockedUsersRows = [];
   state.blockedUsersLoading = true;
+  // A stray edit-in-progress shouldn't survive a full logout/teardown
+  // any more than a stray voice recording should (see
+  // cancelVoiceRecording/stopVoicePlayback just below) — the composer
+  // itself is about to be torn down along with everything else here.
+  state.editingMessageId = null;
   // Detach this device's own presence .info/connected listener, and
   // every "watching someone else's presence" listener currently open
   // on any screen — nothing about anyone's online status should keep
@@ -4450,6 +4580,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeActionMenu();
     closeReactionPicker();
+    cancelEditMessage();
   }
 });
 window.addEventListener("resize", () => {
@@ -4542,13 +4673,25 @@ function buildPersonActions(otherUser) {
 // enforces the same restriction independently, so this is purely a UI
 // convenience, not the actual security boundary.
 function buildMessageActions(convId, message, isOwn) {
-  const actions = [
-    {
-      label: t("menu.deleteForMe"),
-      danger: true,
-      onSelect: () => confirmAndDeleteMessage(convId, message, "me"),
-    },
-  ];
+  const actions = [];
+  // Edit is only ever offered for the caller's own plain text messages
+  // — canEditMessage() (see the EDIT MESSAGE section above) is the same
+  // gate startEditMessage() itself re-checks, so this is purely a UI
+  // convenience: even if this check were somehow bypassed, neither
+  // startEditMessage() nor the Firestore rule would let the edit
+  // through for anything else.
+  const me = currentUser();
+  if (canEditMessage(message, me && me.uid)) {
+    actions.push({
+      label: t("menu.edit"),
+      onSelect: () => startEditMessage(convId, message),
+    });
+  }
+  actions.push({
+    label: t("menu.deleteForMe"),
+    danger: true,
+    onSelect: () => confirmAndDeleteMessage(convId, message, "me"),
+  });
   if (isOwn) {
     actions.push({
       label: t("menu.deleteForEveryone"),
@@ -4734,6 +4877,13 @@ function leaveActiveChat() {
   state.activeChatUsername = null;
   state.activeChatUser = null;
   state.chatMessagesData = [];
+  // Leaving the chat entirely means whatever message id the composer
+  // was pointed at (if any) belongs to a conversation that's no longer
+  // open — reset it and the composer UI the same way switching to a
+  // different conversation does (see cancelEditMessage/openChat),
+  // rather than leaving it to silently point at a message that's now
+  // out of view.
+  cancelEditMessage();
   setPanelView("chats");
   setMainView("welcome");
   closeMobileDetail();
@@ -4770,12 +4920,115 @@ els.chatBlockedUnblockBtn &&
     if (state.activeChatUser) confirmAndUnblockUser(state.activeChatUser);
   });
 
-/* ================= THEME ================= */
+/* ================= APPEARANCE =================
+   ONE picker, exactly 5 modes: dark, light, sakura, volcano, forest.
+   Each mode is simultaneously:
+     - a color theme: sets data-theme on <html>, which is all a
+       [data-theme] CSS-variable block (see style.css) needs to
+       repaint every surface in the app, and
+     - a chat background: sakura/volcano/forest also drive an
+       animated scene + a small, capped set of JS-generated particles
+       (falling petals/rising embers/falling leaves) behind the open
+       conversation; dark/light show no wallpaper at all.
+   Both live under a single localStorage key (KEYS.THEME) — there is
+   no separate wallpaper setting to keep in sync.
+
+   Switching modes only ever touches:
+     - data-theme on <html> (repaints the palette), and
+     - data-wallpaper on #chatWallpaper + a from-scratch rebuild of
+       its particle layer (old particles are always cleared first, so
+       nothing from a previous mode is ever left running/accumulating
+       in the DOM — see clearWallpaperParticles()/spawnWallpaperParticles()).
+   prefers-reduced-motion freezes/skips every wallpaper animation
+   automatically, independent of which mode is picked. */
+const VALID_THEMES = ["dark", "light", "sakura", "volcano", "forest"];
+
+// Which wallpaper scene (if any) a given theme mode shows behind the
+// chat. Dark/light intentionally map to "none" — no animated
+// background — everything else reuses its own name as the wallpaper.
+const THEME_WALLPAPER_MAP = {
+  dark: "none",
+  light: "none",
+  sakura: "sakura",
+  volcano: "volcano",
+  forest: "forest",
+};
+
+const MOBILE_LAYOUT_MAX_WIDTH_WALLPAPER = 860;
+
+// className -> particle CSS class suffix; count/mobileCount -> how many
+// spawn on desktop vs mobile (kept deliberately small — this is a
+// lightweight decorative layer, not a real particle engine); duration
+// range -> per-particle animation length in seconds, randomized a bit
+// so particles don't all move in lockstep.
+const WALLPAPER_PARTICLE_CONFIG = {
+  volcano: { cls: "ember", count: 14, mobileCount: 7, durMin: 3, durMax: 5.5 },
+  sakura: { cls: "petal", count: 16, mobileCount: 8, durMin: 6, durMax: 10 },
+  forest: { cls: "leaf", count: 16, mobileCount: 8, durMin: 5, durMax: 9 },
+};
+
+let themeSelection = "dark";
+let wallpaperSelection = "none";
+
+function prefersReducedMotion() {
+  return (
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+function clearWallpaperParticles() {
+  if (els.chatWallpaperParticles) els.chatWallpaperParticles.innerHTML = "";
+}
+
+function spawnWallpaperParticles(wallpaper) {
+  clearWallpaperParticles();
+  if (!els.chatWallpaperParticles) return;
+  if (wallpaper === "none") return;
+  if (prefersReducedMotion()) return;
+  const config = WALLPAPER_PARTICLE_CONFIG[wallpaper];
+  if (!config) return;
+  const isMobile = window.innerWidth <= MOBILE_LAYOUT_MAX_WIDTH_WALLPAPER;
+  const count = isMobile ? config.mobileCount : config.count;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement("span");
+    el.className = `wallpaper-particle wallpaper-particle--${config.cls}`;
+    el.style.left = `${(Math.random() * 100).toFixed(1)}%`;
+    const dur = (
+      Math.random() * (config.durMax - config.durMin) +
+      config.durMin
+    ).toFixed(2);
+    el.style.animationDuration = `${dur}s`;
+    el.style.animationDelay = `${(Math.random() * dur).toFixed(2)}s`;
+    frag.appendChild(el);
+  }
+  els.chatWallpaperParticles.appendChild(frag);
+}
+
+// Swaps which wallpaper scene shows behind the chat (see
+// THEME_WALLPAPER_MAP) — always clears the previous mode's particles
+// before spawning the new mode's, so exactly one animation loop is
+// ever running, never zero-or-two, and switching e.g. Forest → Dark
+// immediately removes the falling leaves rather than fading them out.
+function applyWallpaper(wallpaper) {
+  wallpaperSelection = wallpaper;
+  if (els.chatWallpaper) {
+    els.chatWallpaper.setAttribute("data-wallpaper", wallpaper);
+  }
+  spawnWallpaperParticles(wallpaper);
+}
+
 function applyTheme(theme) {
+  if (!VALID_THEMES.includes(theme)) theme = "dark";
+  themeSelection = theme;
   document.documentElement.setAttribute("data-theme", theme);
-  document.querySelectorAll(".theme-toggle__btn").forEach((b) => {
-    b.classList.toggle("is-active", b.getAttribute("data-theme") === theme);
+  document.querySelectorAll(".appearance-card[data-theme]").forEach((b) => {
+    const isActive = b.getAttribute("data-theme") === theme;
+    b.classList.toggle("is-active", isActive);
+    b.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
+  applyWallpaper(THEME_WALLPAPER_MAP[theme] || "none");
 }
 function initTheme() {
   const theme = getItem(KEYS.THEME, "dark");
@@ -4789,6 +5042,32 @@ els.themeToggle &&
     setItem(KEYS.THEME, theme);
     applyTheme(theme);
   });
+
+// Regenerating particles on resize (debounced) keeps the desktop/mobile
+// particle counts appropriate if the window is resized/rotated instead
+// of reloaded — cheap since it's the same small cap either way.
+let wallpaperResizeTimer = null;
+window.addEventListener(
+  "resize",
+  () => {
+    clearTimeout(wallpaperResizeTimer);
+    wallpaperResizeTimer = setTimeout(() => {
+      spawnWallpaperParticles(wallpaperSelection);
+    }, 250);
+  },
+  { passive: true },
+);
+
+if (window.matchMedia) {
+  const reducedMotionMq = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  );
+  const onReducedMotionChange = () => spawnWallpaperParticles(wallpaperSelection);
+  if (reducedMotionMq.addEventListener)
+    reducedMotionMq.addEventListener("change", onReducedMotionChange);
+  else if (reducedMotionMq.addListener)
+    reducedMotionMq.addListener(onReducedMotionChange);
+}
 
 /* ================= LANGUAGE ================= */
 function wireLangControls() {
@@ -5144,6 +5423,81 @@ backBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16"><path d="M1
 els.panelMain.prepend(backBtn);
 backBtn.addEventListener("click", closeMobileDetail);
 
+/* ================= MOBILE: EDGE-SWIPE BACK =================
+   Swiping from the left screen edge toward the right, while a chat/
+   profile/settings detail view is open on mobile, returns to the
+   conversation list — the same thing the Back button already does
+   (openMobileDetail/closeMobileDetail), just as a gesture shortcut.
+   The Back button itself always remains the primary, fully-accessible
+   way back; this is purely additive and never required.
+
+   Deliberately minimal and dependency-free (native Touch Events, no
+   gesture library): only touches that *start* within a narrow strip
+   at the left edge arm the gesture, and it disarms itself the moment
+   the touch drifts more vertically than horizontally — so it never
+   competes with normal message-list scrolling, text selection, the
+   image lightbox, attachment/voice buttons, the reaction picker, or
+   action menus, none of which live in that edge strip. Listeners are
+   passive (no preventDefault) so native scrolling is never blocked. */
+const EDGE_SWIPE_EDGE_PX = 24;
+const EDGE_SWIPE_MIN_DX = 70;
+const EDGE_SWIPE_MAX_DY = 50;
+const MOBILE_LAYOUT_MAX_WIDTH = 860;
+
+function isMobileLayoutActive() {
+  return window.innerWidth <= MOBILE_LAYOUT_MAX_WIDTH;
+}
+
+function initSwipeNavigation() {
+  if (!els.panelMain) return;
+  const swipe = { active: false, startX: 0, startY: 0 };
+
+  els.panelMain.addEventListener(
+    "touchstart",
+    (e) => {
+      swipe.active = false;
+      if (!isMobileLayoutActive()) return;
+      if (!els.appShellRoot.classList.contains("is-detail-open")) return;
+      const touch = e.touches[0];
+      if (!touch || touch.clientX > EDGE_SWIPE_EDGE_PX) return;
+      swipe.active = true;
+      swipe.startX = touch.clientX;
+      swipe.startY = touch.clientY;
+    },
+    { passive: true },
+  );
+
+  els.panelMain.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!swipe.active) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dy = touch.clientY - swipe.startY;
+      const dx = touch.clientX - swipe.startX;
+      // More vertical than horizontal: this is a scroll, not a
+      // back-swipe — hand it back to normal scrolling immediately.
+      if (Math.abs(dy) > Math.abs(dx)) swipe.active = false;
+    },
+    { passive: true },
+  );
+
+  const endSwipe = (e) => {
+    if (!swipe.active) return;
+    swipe.active = false;
+    const touch = e.changedTouches && e.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - swipe.startX;
+    const dy = touch.clientY - swipe.startY;
+    if (dx > EDGE_SWIPE_MIN_DX && Math.abs(dy) < EDGE_SWIPE_MAX_DY) {
+      closeMobileDetail();
+    }
+  };
+  els.panelMain.addEventListener("touchend", endSwipe, { passive: true });
+  els.panelMain.addEventListener("touchcancel", endSwipe, { passive: true });
+}
+initSwipeNavigation();
+
 /* ================= PEOPLE SEARCH ================= */
 // Guarded with peopleSearchToken so that if the person types quickly
 // (or a slow network reply arrives late), only the *latest* search's
@@ -5289,7 +5643,11 @@ async function openChat(username, navigate) {
   setMainView("chat");
   if (navigate) openMobileDetail();
   // Clear any leftover draft from a previously open conversation so text
-  // typed for one person never leaks into a different person's chat.
+  // typed for one person never leaks into a different person's chat —
+  // and the same for an in-progress edit: it belongs to a specific
+  // message in a specific conversation, so it's never carried over to
+  // whatever chat is being opened now (see cancelEditMessage above).
+  cancelEditMessage();
   if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
 
@@ -5406,7 +5764,138 @@ function autoSizeChatInput() {
   el.classList.toggle("is-scrollable", el.scrollHeight > CHAT_INPUT_MAX_HEIGHT);
 }
 
+/* ===================================================================
+   SECTION: EDIT MESSAGE — composer UI
+   Reuses the existing composer (#chatInput/#chatSendBtn) rather than a
+   new page or modal, per spec — entering edit mode just repurposes
+   what's already there:
+     - #chatEditBar (hidden by default, see index.html) appears above
+       the composer with an "Editing message" label and its own Cancel.
+     - #chatSendBtn swaps to a checkmark icon/label and gets
+       .is-editing (see style.css) so it visibly reads as "Save"
+       instead of "Send" while active.
+   Only ONE message can be in edit state at a time — state.editingMessageId
+   is the single source of truth; starting a new edit while one is
+   already open simply overwrites it (old draft discarded, nothing was
+   ever saved from it), which is exactly "safely cancel the previous
+   edit before starting the new one".
+=================================================================== */
+const SEND_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 12l16-8-6 8 6 8-16-8Z" /></svg>';
+const SAVE_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+// Swaps the composer's send button between its normal "Send" look and
+// the "Save" look used while editing — icon, title (kept in sync with
+// data-i18n-title so a language switch mid-edit still shows the right
+// label, same mechanism applyTranslations() already uses everywhere
+// else), and aria-label.
+function setComposerEditingIcon(isEditing) {
+  if (!els.chatSendBtn) return;
+  els.chatSendBtn.classList.toggle("is-editing", isEditing);
+  els.chatSendBtn.innerHTML = isEditing ? SAVE_ICON_SVG : SEND_ICON_SVG;
+  const key = isEditing ? "chat.edit.save" : "chat.send";
+  els.chatSendBtn.setAttribute("data-i18n-title", key);
+  els.chatSendBtn.title = t(key);
+  els.chatSendBtn.setAttribute("aria-label", t(key));
+}
+
+// Only the sender of a plain text message may edit it — voice/image/file
+// messages (identified by `type`) and anything already tombstoned via
+// "delete for everyone" are never eligible. This is also checked again
+// here (not just in buildMessageActions, which is what actually keeps
+// the Edit item out of the menu in the first place) since this is the
+// real entry point into edit mode and shouldn't trust its caller alone.
+function canEditMessage(message, meUid) {
+  return !!(
+    message &&
+    message.id &&
+    meUid &&
+    message.from === meUid &&
+    !message.type &&
+    message.deletedForEveryone !== true
+  );
+}
+
+function startEditMessage(convId, message) {
+  const me = currentUser();
+  if (!els.chatInput || !canEditMessage(message, me && me.uid)) return;
+  state.editingMessageId = message.id;
+  els.chatInput.value = message.text || "";
+  autoSizeChatInput();
+  if (els.chatEditBar) els.chatEditBar.hidden = false;
+  setComposerEditingIcon(true);
+  els.chatInput.focus();
+  const len = els.chatInput.value.length;
+  els.chatInput.setSelectionRange(len, len);
+}
+
+// Restores the composer to its normal send state without touching
+// Firestore — used both by the explicit Cancel button and by anything
+// else that needs to safely abandon an in-progress edit (Escape,
+// starting a different edit, switching/leaving the chat). Clearing the
+// input text here (not just the editing flag) is what "restore the
+// composer to its normal send state" means in practice — a half-typed
+// edit is exactly as discardable as a half-typed new message would be.
+function cancelEditMessage() {
+  if (!state.editingMessageId) return;
+  state.editingMessageId = null;
+  if (els.chatEditBar) els.chatEditBar.hidden = true;
+  setComposerEditingIcon(false);
+  if (els.chatInput) {
+    els.chatInput.value = "";
+    autoSizeChatInput();
+  }
+  stopMyTyping();
+}
+
+async function saveEditedMessage() {
+  const me = currentUser();
+  const other = state.activeChatUser;
+  const msgId = state.editingMessageId;
+  if (!me || !other || !msgId || !els.chatInput) return;
+  const text = els.chatInput.value.trim();
+  if (!text) {
+    // Empty/whitespace-only edit: never reaches Firestore, and the
+    // person stays in editing mode with whatever they typed still
+    // there (nothing to restore — there's simply nothing worth saving).
+    showToast(t("chat.edit.emptyError"), "error");
+    return;
+  }
+  const convId = conversationId(me.uid, other.uid);
+  if (els.chatSendBtn) els.chatSendBtn.disabled = true;
+  try {
+    await updateMessageText(convId, msgId, text);
+  } catch (e) {
+    console.error("HUM: failed to save edited message", e);
+    showToast(t("errors.network"), "error");
+    if (els.chatSendBtn) els.chatSendBtn.disabled = false;
+    return; // stay in editing mode; draft is untouched
+  }
+  if (els.chatSendBtn) els.chatSendBtn.disabled = false;
+  // No manual re-render needed: this write lands on the exact same
+  // message doc the open chat's live listener is already subscribed
+  // to (see watchConversationMessages/renderChatMessages), same as
+  // every other message-level write in this file.
+  state.editingMessageId = null;
+  if (els.chatEditBar) els.chatEditBar.hidden = true;
+  setComposerEditingIcon(false);
+  els.chatInput.value = "";
+  autoSizeChatInput();
+  stopMyTyping();
+  showToast(t("toast.messageEdited"), "success");
+}
+
 async function sendChatMessage() {
+  // Editing takes over the composer's submit path entirely — Enter and
+  // the send button both funnel through here already (see the
+  // chatComposerForm submit/keydown listeners below), so branching
+  // here is what makes "press Save" and "press Enter while editing"
+  // both work without a second submit path to keep in sync.
+  if (state.editingMessageId) {
+    await saveEditedMessage();
+    return;
+  }
   const me = currentUser();
   if (!me || !state.activeChatUsername) return;
   // Extra client-side guard on top of the security rule: the composer
@@ -5461,6 +5950,10 @@ els.chatComposerForm.addEventListener("submit", (e) => {
   e.preventDefault();
   sendChatMessage();
 });
+els.chatEditCancelBtn &&
+  els.chatEditCancelBtn.addEventListener("click", () => {
+    cancelEditMessage();
+  });
 els.chatInput.addEventListener("input", autoSizeChatInput);
 els.chatInput.addEventListener("input", handleComposerTypingInput);
 els.chatInput.addEventListener("keydown", (e) => {

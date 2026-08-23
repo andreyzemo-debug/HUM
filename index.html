@@ -7,6 +7,29 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <title>HUM — find your frequency</title>
+    <script>
+      // Applies the saved theme before first paint so switching themes
+      // never causes a flash of the default HUM Dark theme on reload.
+      // Mirrors the same localStorage key / "system" resolution logic
+      // as applyTheme()/initTheme() in app.js.
+      (function () {
+        try {
+          var raw = localStorage.getItem("hum_theme");
+          var saved = raw ? JSON.parse(raw) : "dark";
+          var effective = saved;
+          if (saved === "system") {
+            effective =
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: light)").matches
+                ? "light"
+                : "dark";
+          }
+          if (effective && effective !== "dark") {
+            document.documentElement.setAttribute("data-theme", effective);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%229%22 fill=%22%2312141b%22/><path d=%22M5 16c2-6 3 6 5 0s3-9 5 0 3 9 5 0 3-6 5 0%22 stroke=%22%237c9eff%22 stroke-width=%222.4%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>"
@@ -712,27 +735,55 @@
             </div>
           </div>
 
-          <div class="settings-group">
+          <div class="settings-group settings-group--appearance">
             <h3 data-i18n="settings.appearance">Appearance</h3>
             <p class="settings-group__hint" data-i18n="settings.appearanceHint">
-              Switch between a dark or light signal.
+              Pick how HUM looks and feels.
             </p>
-            <div class="theme-toggle" id="themeToggle">
-              <button
-                type="button"
-                class="theme-toggle__btn"
-                data-theme="dark"
-                data-i18n="settings.dark"
-              >
-                Dark
+            <div class="appearance-grid" id="themeToggle" role="group" aria-label="Appearance">
+              <button type="button" class="appearance-card" data-theme="dark" aria-pressed="false">
+                <span class="appearance-card__preview" aria-hidden="true">
+                  <span class="appearance-card__scene"></span>
+                  <span class="appearance-card__icon">🌙</span>
+                </span>
+                <span class="appearance-card__name" data-i18n="settings.modeDark">Dark</span>
+                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
               </button>
-              <button
-                type="button"
-                class="theme-toggle__btn"
-                data-theme="light"
-                data-i18n="settings.light"
-              >
-                Light
+
+              <button type="button" class="appearance-card" data-theme="light" aria-pressed="false">
+                <span class="appearance-card__preview" aria-hidden="true">
+                  <span class="appearance-card__scene"></span>
+                  <span class="appearance-card__icon">☀️</span>
+                </span>
+                <span class="appearance-card__name" data-i18n="settings.modeLight">Light</span>
+                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+              </button>
+
+              <button type="button" class="appearance-card" data-theme="sakura" aria-pressed="false">
+                <span class="appearance-card__preview" aria-hidden="true">
+                  <span class="appearance-card__scene"></span>
+                  <span class="appearance-card__icon">🌸</span>
+                </span>
+                <span class="appearance-card__name" data-i18n="settings.modeSakura">Sakura</span>
+                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+              </button>
+
+              <button type="button" class="appearance-card" data-theme="volcano" aria-pressed="false">
+                <span class="appearance-card__preview" aria-hidden="true">
+                  <span class="appearance-card__scene"></span>
+                  <span class="appearance-card__icon">🌋</span>
+                </span>
+                <span class="appearance-card__name" data-i18n="settings.modeVolcano">Volcano</span>
+                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+              </button>
+
+              <button type="button" class="appearance-card" data-theme="forest" aria-pressed="false">
+                <span class="appearance-card__preview" aria-hidden="true">
+                  <span class="appearance-card__scene"></span>
+                  <span class="appearance-card__icon">🌲</span>
+                </span>
+                <span class="appearance-card__name" data-i18n="settings.modeForest">Forest</span>
+                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
               </button>
             </div>
           </div>
@@ -769,6 +820,27 @@
           data-main-view="chat"
           hidden
         >
+          <!-- Animated wallpaper: sits behind the header/messages/composer
+               (see .chat-wallpaper / .chat-wallpaper__overlay z-index
+               stacking in style.css). data-wallpaper is driven straight
+               from the single Appearance picker in Settings — dark/light
+               map to "none", sakura/volcano/forest reuse their own name
+               (see applyTheme()/applyWallpaper() in app.js).
+               #chatWallpaperParticles holds a small, capped set of
+               JS-generated particles (embers/petals/leaves) that's fully
+               cleared and rebuilt on every mode change — never left
+               running for a mode no longer selected. -->
+          <div
+            class="chat-wallpaper"
+            id="chatWallpaper"
+            data-wallpaper="none"
+            aria-hidden="true"
+          >
+            <div class="chat-wallpaper__scene"></div>
+            <div class="chat-wallpaper__particles" id="chatWallpaperParticles"></div>
+          </div>
+          <div class="chat-wallpaper__overlay" aria-hidden="true"></div>
+
           <header class="chat-header" id="chatHeaderInfo">
             <div class="avatar" id="chatHeaderAvatar"></div>
             <div class="chat-header__info">
@@ -798,6 +870,14 @@
           </div>
 
           <div class="chat-messages" id="chatMessages"></div>
+
+          <div class="chat-edit-bar" id="chatEditBar" hidden>
+            <svg class="chat-edit-bar__icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path d="M4 20h4l10.5-10.5a2.83 2.83 0 0 0-4-4L4 16v4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="chat-edit-bar__label" data-i18n="chat.edit.editingLabel">Editing message</span>
+            <button type="button" class="link-btn chat-edit-bar__cancel" id="chatEditCancelBtn" data-i18n="common.cancel">Cancel</button>
+          </div>
 
           <form class="chat-composer" id="chatComposerForm">
             <input
