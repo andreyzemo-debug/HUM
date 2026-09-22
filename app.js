@@ -102,6 +102,31 @@
 //              return (after.size() == before.size() + 1 && after.removeAll(before).hasOnly([uid]))
 //                || (before.size() == after.size() + 1 && before.removeAll(after).hasOnly([uid]));
 //            }
+//            // Controls the SHAPE of an optional `replyTo` map on a
+//            // newly-created message (see buildReplyToPayload in
+//            // app.js) — a message is free to omit `replyTo` entirely
+//            // (an ordinary, non-reply message), but if it's present it
+//            // must be exactly the four small pointer/preview fields
+//            // the client ever sends: messageId/from/type (always
+//            // strings) and text (a string when present — it's simply
+//            // omitted for voice/image/file replies, see
+//            // buildReplyToPayload). This never grants any extra
+//            // privilege on its own — `replyTo.from` is just denormalized
+//            // display data for rendering the quoted author, the SAME as
+//            // participantsInfo elsewhere in this schema, never a
+//            // security check — the real "who sent THIS message" identity
+//            // is still, and only ever, request.resource.data.from,
+//            // checked against request.auth.uid exactly as before.
+//            function isValidReplyTo(data){
+//              return !('replyTo' in data)
+//                || (
+//                  data.replyTo.keys().hasOnly(['messageId','from','text','type'])
+//                  && 'messageId' in data.replyTo && data.replyTo.messageId is string
+//                  && 'from' in data.replyTo && data.replyTo.from is string
+//                  && 'type' in data.replyTo && data.replyTo.type is string
+//                  && (!('text' in data.replyTo) || data.replyTo.text is string)
+//                );
+//            }
 //
 //            match /users/{uid} {
 //              allow read: if true;
@@ -110,7 +135,15 @@
 //                && request.auth.uid == request.resource.data.uid;
 //              allow update: if isSignedIn()
 //                && request.auth.uid == uid;
-//              allow delete: if false;
+//              // Changed from `if false` for the Delete Account feature
+//              // (see deleteUserAccount() further down in this file) —
+//              // an account may now delete its OWN profile document,
+//              // and only its own: the direct request.auth.uid == uid
+//              // check is exactly the same shape every other rule in
+//              // this match block already uses, just extended to
+//              // delete. Nobody can ever delete a DIFFERENT account's
+//              // profile through this rule, signed in or not.
+//              allow delete: if isSignedIn() && request.auth.uid == uid;
 //
 //              // blocked/{blockedUid}: records that THIS account (uid)
 //              // has blocked account `blockedUid`. Only the account
@@ -171,11 +204,21 @@
 //                // point for blocking — the frontend also disables
 //                // sending, but THIS is what makes it impossible to
 //                // bypass by calling Firestore directly from the browser.
+//                // An optional `replyTo` map may ride along as part of
+//                // this same create — see isValidReplyTo above — but it
+//                // can only ever be attached by the message's own
+//                // sender, at creation time, in the controlled shape
+//                // that function enforces; there's no separate write
+//                // path that could add or change it afterward (the
+//                // update rule below has no branch that touches
+//                // `replyTo` at all, so it's as immutable post-creation
+//                // as from/ts/type already are).
 //                allow create: if isSignedIn()
 //                  && exists(/databases/$(database)/documents/conversations/$(convId))
 //                  && request.auth.uid in conversationDoc(convId).data.participants
 //                  && request.resource.data.from == request.auth.uid
-//                  && !isBlockedPair(request.auth.uid, otherParticipant(convId, request.auth.uid));
+//                  && !isBlockedPair(request.auth.uid, otherParticipant(convId, request.auth.uid))
+//                  && isValidReplyTo(request.resource.data);
 //                // Four, and ONLY four, shapes of update are ever
 //                // allowed on a message doc — every other field
 //                // (from/text/ts/type/voicePath/…) is permanently
@@ -293,6 +336,22 @@
 //          blockedDisplayName, blockedAvatar, createdAt } — one doc per
 //          person `uid` has blocked. Denormalized display fields exist
 //          so Settings → Privacy → Blocked users can render the list
+//
+//      DELETE ACCOUNT (see deleteUserAccount() and its helpers further
+//      down in this file): deletes users/{uid} itself (new rule above),
+//      every users/{uid}/blocked/* doc (already allowed), and — for
+//      every conversation this account participates in — tombstones
+//      every message this account sent (reusing the EXISTING
+//      deleteMessageForEveryone()/its Storage cleanup, no rule change),
+//      then writes a fixed "Deleted account" placeholder into that
+//      conversation's participantsInfo[uid] and adds uid to hiddenFor
+//      (both already allowed by the existing conversations update rule
+//      above — any participant may already update participantsInfo/
+//      hiddenFor). The conversation document and the OTHER
+//      participant's own messages/copy of it are never touched or
+//      deleted — conversations/messages `allow delete: if false` is
+//      intentionally left unchanged, since deleting either would also
+//      destroy the other, still-active participant's data.
 //          without extra profile reads, the same pattern conversations
 //          already use for participantsInfo.
 //        - conversations/{convId}/messages/{msgId}.readAt: string ISO
@@ -362,6 +421,27 @@
 //          feature in this file already follows, nothing about the
 //          message's id/sender/timestamp/type/attachments/reactions/
 //          readAt/deletedFor/deletedForEveryone is ever touched by it.
+//        - conversations/{convId}/messages/{msgId}.replyTo: an optional
+//          map — { messageId, from, text, type } — present only on
+//          messages sent as a reply to an earlier one (see the REPLY
+//          MESSAGE sections in app.js: buildReplyToPayload/
+//          startReplyMessage/replyPreviewMarkup). Set once, at
+//          creation, by the new message's own sender, and never
+//          modified afterward — validated server-side by isValidReplyTo
+//          above and gated into the create rule alongside the existing
+//          sender/participant/blocking checks, nothing else. Works on
+//          every message type as the REPLYING message (text/voice/
+//          image/file can all carry a replyTo), and can point at any
+//          message type as the ORIGINAL being replied to. `text` is
+//          only ever a short preview snippet — the original message's
+//          own doc is the source of truth, and neither `text` nor
+//          anything else in `replyTo` is ever file bytes, audio bytes,
+//          or a Supabase URL. If the original message is later
+//          tombstoned via "delete for everyone", or simply isn't in the
+//          currently loaded chat, replyPreviewMarkup() shows a
+//          translated "unavailable" state instead of the quoted
+//          preview — the reply message itself is never touched or
+//          cascade-deleted either way.
 //
 //   6. Realtime Database → Rules, paste EXACTLY this (separate product
 //      from Firestore, separate console tab, separate rules language —
@@ -427,6 +507,9 @@ import {
   onAuthStateChanged,
   setPersistence,
   browserLocalPersistence,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  deleteUser,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore,
@@ -1372,6 +1455,12 @@ async function sendVoiceMessage() {
   const convId = conversationId(me.uid, other.uid);
   showToast(t("chat.voice.uploading"));
 
+  // Capture the reply draft (if any) before it can be cleared by
+  // anything else — same shape/reasoning as sendChatMessage's use of
+  // buildReplyToPayload above.
+  const replyingMessage = state.replyingToMessage;
+  const replyTo = buildReplyToPayload(replyingMessage);
+
   let path;
   try {
     path = await uploadVoiceBlob(
@@ -1392,7 +1481,9 @@ async function sendVoiceMessage() {
       voicePath: path,
       voiceMimeType: recording.mimeType,
       voiceDuration: recording.durationSeconds,
+      ...(replyTo ? { replyTo } : {}),
     });
+    cancelReplyMessage();
     showToast(t("chat.voice.sent"), "success");
   } catch (e) {
     console.error("HUM: failed to create voice message after upload", e);
@@ -1681,6 +1772,15 @@ async function sendOneAttachment(me, other, convId, file) {
   const isImage = file.type && file.type.startsWith("image/");
   showToast(t("chat.attach.uploading", { name: file.name }));
 
+  // Only the FIRST attachment in a multi-file selection should carry
+  // the reply (see sendAttachmentFiles below) — capturing this here,
+  // and clearing it via cancelReplyMessage() only after this specific
+  // file's message is created, is what makes that "just work" across
+  // the loop without sendAttachmentFiles needing any reply-specific
+  // logic of its own.
+  const replyingMessage = state.replyingToMessage;
+  const replyTo = buildReplyToPayload(replyingMessage);
+
   let path;
   try {
     path = await uploadChatFileBlob(convId, me.uid, file);
@@ -1697,7 +1797,9 @@ async function sendOneAttachment(me, other, convId, file) {
       fileName: file.name,
       fileMimeType: file.type || "application/octet-stream",
       fileSize: file.size,
+      ...(replyTo ? { replyTo } : {}),
     });
+    cancelReplyMessage();
     showToast(t("chat.attach.sent", { name: file.name }), "success");
   } catch (e) {
     console.error("HUM: failed to create attachment message after upload", file.name, e);
@@ -2503,11 +2605,20 @@ const translations = {
         emojiLabel: "React with {emoji}",
         chipLabel: "{emoji} reactions: {count}",
       },
+      reply: {
+        replyingToSelf: "Replying to yourself",
+        replyingTo: "Replying to {name}",
+        voice: "Voice message",
+        image: "Photo",
+        file: "File",
+        unavailable: "Message unavailable",
+      },
     },
     menu: {
       remove: "Remove",
       block: "Block",
       unblock: "Unblock",
+      reply: "Reply",
       edit: "Edit",
       deleteForMe: "Delete for me",
       deleteForEveryone: "Delete for everyone",
@@ -2546,6 +2657,18 @@ const translations = {
       blockedUsersEmpty: "You haven't blocked anyone.",
       account: "Account",
       accountHint: "Signed in as {username}.",
+      deleteAccount: {
+        button: "Delete account",
+        modalTitle: "Delete your account?",
+        modalWarning:
+          "This permanently deletes your account, profile, messages, and files. This can't be undone.",
+        passwordLabel: "Enter your password to confirm",
+        confirmButton: "Delete my account",
+        deleting: "Deleting…",
+        passwordRequired: "Enter your password to confirm.",
+        wrongPassword: "Incorrect password.",
+        tooManyAttempts: "Too many attempts. Try again later.",
+      },
     },
     toast: {
       loggedIn: "Welcome back, {name}.",
@@ -2559,6 +2682,7 @@ const translations = {
       messageDeletedForMe: "Message deleted for you.",
       messageDeletedEveryone: "Message deleted.",
       messageEdited: "Message updated.",
+      accountDeleted: "Your account has been deleted.",
     },
   },
 
@@ -2726,11 +2850,20 @@ const translations = {
         emojiLabel: "Отреагировать {emoji}",
         chipLabel: "{emoji} реакций: {count}",
       },
+      reply: {
+        replyingToSelf: "Ответ на своё сообщение",
+        replyingTo: "Ответ пользователю {name}",
+        voice: "Голосовое сообщение",
+        image: "Фото",
+        file: "Файл",
+        unavailable: "Сообщение недоступно",
+      },
     },
     menu: {
       remove: "Удалить",
       block: "Заблокировать",
       unblock: "Разблокировать",
+      reply: "Ответить",
       edit: "Редактировать",
       deleteForMe: "Удалить у меня",
       deleteForEveryone: "Удалить у всех",
@@ -2768,6 +2901,18 @@ const translations = {
       blockedUsersEmpty: "Вы никого не заблокировали.",
       account: "Аккаунт",
       accountHint: "Вы вошли как {username}.",
+      deleteAccount: {
+        button: "Удалить аккаунт",
+        modalTitle: "Удалить ваш аккаунт?",
+        modalWarning:
+          "Это навсегда удалит ваш аккаунт, профиль, сообщения и файлы. Это действие нельзя отменить.",
+        passwordLabel: "Введите пароль для подтверждения",
+        confirmButton: "Удалить мой аккаунт",
+        deleting: "Удаление…",
+        passwordRequired: "Введите пароль для подтверждения.",
+        wrongPassword: "Неверный пароль.",
+        tooManyAttempts: "Слишком много попыток. Попробуйте позже.",
+      },
     },
     toast: {
       loggedIn: "С возвращением, {name}.",
@@ -2781,6 +2926,7 @@ const translations = {
       messageDeletedForMe: "Сообщение удалено у вас.",
       messageDeletedEveryone: "Сообщение удалено.",
       messageEdited: "Сообщение обновлено.",
+      accountDeleted: "Ваш аккаунт был удалён.",
     },
   },
 
@@ -2950,11 +3096,20 @@ const translations = {
         emojiLabel: "{emoji} bilan reaksiya bildirish",
         chipLabel: "{emoji} reaksiyalar: {count}",
       },
+      reply: {
+        replyingToSelf: "O'z xabaringizga javob",
+        replyingTo: "{name} ga javob",
+        voice: "Ovozli xabar",
+        image: "Rasm",
+        file: "Fayl",
+        unavailable: "Xabar mavjud emas",
+      },
     },
     menu: {
       remove: "Olib tashlash",
       block: "Bloklash",
       unblock: "Blokdan chiqarish",
+      reply: "Javob berish",
       edit: "Tahrirlash",
       deleteForMe: "Men uchun o‘chirish",
       deleteForEveryone: "Hamma uchun o‘chirish",
@@ -2993,6 +3148,18 @@ const translations = {
       blockedUsersEmpty: "Siz hech kimni bloklamagansiz.",
       account: "Akkount",
       accountHint: "Siz {username} sifatida kirdingiz.",
+      deleteAccount: {
+        button: "Akkountni oʻchirish",
+        modalTitle: "Akkountingiz oʻchirilsinmi?",
+        modalWarning:
+          "Bu akkountingiz, profilingiz, xabarlaringiz va fayllaringizni butunlay oʻchiradi. Buni bekor qilib boʻlmaydi.",
+        passwordLabel: "Tasdiqlash uchun parolingizni kiriting",
+        confirmButton: "Akkountimni oʻchirish",
+        deleting: "Oʻchirilmoqda…",
+        passwordRequired: "Tasdiqlash uchun parolingizni kiriting.",
+        wrongPassword: "Parol noto‘g‘ri.",
+        tooManyAttempts: "Juda ko‘p urinish. Birozdan so‘ng qayta urinib ko‘ring.",
+      },
     },
     toast: {
       loggedIn: "Xush kelibsiz, {name}.",
@@ -3006,6 +3173,7 @@ const translations = {
       messageDeletedForMe: "Xabar siz uchun oʻchirildi.",
       messageDeletedEveryone: "Xabar oʻchirildi.",
       messageEdited: "Xabar yangilandi.",
+      accountDeleted: "Akkountingiz oʻchirildi.",
     },
   },
 };
@@ -3368,6 +3536,243 @@ async function logoutUser() {
   stopAllConversationWatchers();
   await signOut(auth).catch(() => {});
   state.me = null;
+}
+
+/* ===================================================================
+   SECTION: DELETE ACCOUNT
+   Entirely client-side — no Cloud Function / Admin SDK backend. A
+   Firebase Auth user can already delete THEIR OWN account with the
+   ordinary client SDK's deleteUser(), which needs no privileged
+   credentials; the only wrinkle is Firebase requiring a "recent" login
+   for it, which is why this flow asks for the password again up front
+   (see deleteUserAccount below) instead of reacting to the
+   auth/requires-recent-login error after the fact. This intentionally
+   avoids introducing a whole new backend/deploy step for a project that
+   doesn't otherwise have one — see the top-of-file SETUP notes.
+
+   Order matters a lot here, and is the same in spirit as logoutUser()
+   above: everything that still needs to be signed in as this account
+   (data cleanup, then deleting the users/{uid} profile doc) has to
+   happen BEFORE the Auth account itself is deleted, since deleteUser()
+   ends the session immediately and every write below is gated by
+   Firestore rules checking request.auth.uid == uid.
+=================================================================== */
+
+// Fixed, non-translated tombstone placeholder for a deleted account's
+// half of participantsInfo on any conversation another (still active)
+// person keeps. Deliberately NOT run through t() at deletion time —
+// that would freeze this string in whichever language the deleting
+// person's own UI happened to be in, which has nothing to do with the
+// OTHER participant's language. A plain label here is the smallest
+// change that keeps that conversation from forever showing a stale,
+// still-looks-like-a-real-account name — see purgeOwnConversationData.
+const DELETED_ACCOUNT_PLACEHOLDER_NAME = "Deleted account";
+
+// Best-effort sweep of every object Supabase Storage still has under
+// `${prefix}` (i.e. this account's own `${convId}/${uid}` folder) in
+// one bucket. Separate from — and in addition to — the per-message
+// cleanup deleteMessageForEveryone() already does: this also catches an
+// upload that finished but never got a matching Firestore message (see
+// deleteVoiceBlobSafely/deleteChatFileBlobSafely's own "orphaned
+// upload" comments), which a per-message pass alone would miss. Never
+// throws, matching every other Storage cleanup helper in this file —
+// losing a leftover blob is not a reason to fail the whole account
+// deletion.
+async function purgeOwnStorageFolder(bucket, prefix) {
+  if (!supabase) return;
+  try {
+    const ok = await ensureSupabaseAuth();
+    if (!ok) return;
+    const { data, error } = await supabase.storage.from(bucket).list(prefix);
+    if (error || !data || !data.length) return;
+    const paths = data
+      .filter((entry) => entry && entry.name)
+      .map((entry) => `${prefix}/${entry.name}`);
+    if (!paths.length) return;
+    await supabase.storage.from(bucket).remove(paths);
+  } catch (e) {
+    console.error("HUM: failed to sweep storage folder", bucket, prefix, e);
+  }
+}
+
+// Deletes users/{uid}/blocked/* — the account's own block list. Only
+// ever reads/writes uid's OWN blocked subcollection (matching every
+// other blocked-list function in the BLOCKING/REMOVE section above);
+// nothing about who ELSE has blocked uid is touched or even
+// discoverable from here, matching the existing security rules.
+async function purgeOwnBlockedList(uid) {
+  const snap = await getDocs(collection(db, "users", uid, "blocked"));
+  for (const blockedDoc of snap.docs) {
+    await deleteDoc(doc(db, "users", uid, "blocked", blockedDoc.id));
+  }
+}
+
+// Walks every conversation this account participates in and, for each
+// one: tombstones every message THIS account sent (reusing
+// deleteMessageForEveryone() exactly as "Delete for everyone" already
+// does, Storage cleanup included), sweeps any leftover Storage objects
+// under this account's own folder for that conversation, then — in one
+// merge write already covered by the EXISTING conversations update rule
+// (no rule change needed) — hides the conversation from this account's
+// own (about to vanish) view and overwrites this account's half of
+// participantsInfo with a fixed placeholder. The conversation document
+// itself, and the other participant's own messages and copy of it, are
+// never deleted — conversations/messages stay `allow delete: if false`,
+// unchanged, since deleting either would also destroy the OTHER, still
+// active person's data.
+async function purgeOwnConversationData(uid) {
+  const convSnap = await getDocs(
+    fbQuery(collection(db, "conversations"), where("participants", "array-contains", uid)),
+  );
+  for (const convDoc of convSnap.docs) {
+    const convId = convDoc.id;
+    const conv = convDoc.data();
+    const otherUid = (conv.participants || []).find((p) => p !== uid);
+
+    const messagesSnap = await getDocs(
+      collection(db, "conversations", convId, "messages"),
+    );
+    for (const msgDoc of messagesSnap.docs) {
+      const message = { ...msgDoc.data(), id: msgDoc.id };
+      if (message.from !== uid || message.deletedForEveryone) continue;
+      await deleteMessageForEveryone(convId, message);
+    }
+
+    await purgeOwnStorageFolder(VOICE_BUCKET, `${convId}/${uid}`);
+    await purgeOwnStorageFolder(CHAT_FILES_BUCKET, `${convId}/${uid}`);
+
+    const update = { hiddenFor: arrayUnion(uid) };
+    if (otherUid) {
+      update.participantsInfo = {
+        [uid]: {
+          username: (conv.participantsInfo && conv.participantsInfo[uid] && conv.participantsInfo[uid].username) || "",
+          displayName: DELETED_ACCOUNT_PLACEHOLDER_NAME,
+          avatar: { type: "generated" },
+        },
+      };
+    }
+    await setDoc(doc(db, "conversations", convId), update, { merge: true });
+  }
+}
+
+// Full "Delete Account" flow. `password` is required up front (rather
+// than only reacting to auth/requires-recent-login) so a wrong password
+// fails immediately, before anything is touched, and so the destructive
+// steps below never run against a session that's about to be rejected
+// partway through. Returns { ok:true } on success, or
+// { ok:false, error } with a translated, user-facing message — the
+// caller (confirmAndDeleteAccount in the UI section) is what actually
+// signs the account out of the UI and navigates away, only once this
+// resolves ok.
+async function deleteUserAccount(password) {
+  requireFirebaseConfig();
+  const me = state.me;
+  const firebaseUser = auth.currentUser;
+  if (!me || !firebaseUser) {
+    return { ok: false, error: t("auth.login.errorInvalid") };
+  }
+  if (!password) {
+    return {
+      ok: false,
+      error: t("settings.deleteAccount.passwordRequired"),
+    };
+  }
+
+  const reauth = () =>
+    reauthenticateWithCredential(
+      firebaseUser,
+      EmailAuthProvider.credential(firebaseUser.email, password),
+    );
+
+  try {
+    await reauth();
+  } catch (e) {
+    if (
+      e.code === "auth/wrong-password" ||
+      e.code === "auth/invalid-credential"
+    ) {
+      return { ok: false, error: t("settings.deleteAccount.wrongPassword") };
+    }
+    if (e.code === "auth/too-many-requests") {
+      return {
+        ok: false,
+        error: t("settings.deleteAccount.tooManyAttempts"),
+      };
+    }
+    return { ok: false, error: t("errors.network") };
+  }
+
+  // Data cleanup — still fully authenticated as this account the whole
+  // time (see the section comment above for why this has to come
+  // before both the profile-doc delete and deleteUser() below). Nothing
+  // here is destructive to any OTHER account's data.
+  try {
+    await purgeOwnConversationData(me.uid);
+    await purgeOwnBlockedList(me.uid);
+  } catch (e) {
+    console.error("HUM: account deletion data cleanup failed", e);
+    return { ok: false, error: t("errors.network") };
+  }
+
+  // The account's own Firestore profile — deleteDoc, not deleteUser;
+  // this is the users/{uid} document, unrelated to the Firebase Auth
+  // account itself, which is deleted separately below. Requires the
+  // rule change documented at the top of this file (users/{uid}
+  // allow delete). If this fails, nothing about the account is reported
+  // as deleted and the person stays signed in — the data cleanup above
+  // is safe to simply re-run on a retry (every step in it is already
+  // idempotent: tombstoning an already-tombstoned message, or a
+  // blocked-doc/Storage object that's already gone, is a no-op).
+  try {
+    await deleteDoc(doc(db, "users", me.uid));
+  } catch (e) {
+    console.error("HUM: failed to delete profile document", e);
+    return { ok: false, error: t("errors.network") };
+  }
+
+  // Presence/typing/watchers teardown — identical to logoutUser()'s own
+  // sequence and ordering, and for the same reason: this still needs a
+  // valid signed-in auth.uid for the Realtime Database rules, so it has
+  // to run before deleteUser() below, not after.
+  await goOfflineNow(me.uid).catch(() => {});
+  await stopMyTyping().catch(() => {});
+  cancelVoiceRecording();
+  stopVoicePlayback();
+  stopAllConversationWatchers();
+
+  try {
+    await deleteUser(firebaseUser);
+  } catch (e) {
+    if (e.code === "auth/requires-recent-login") {
+      // Shouldn't happen this soon after reauth() above, but handled
+      // rather than assumed away — retry the reauth+delete pair exactly
+      // once with the same password before giving up. By this point the
+      // profile document is already gone; a second failure here leaves
+      // an Auth account with no Firestore profile, which
+      // loadOrRecoverProfile() (see the PROFILES section) already knows
+      // how to self-heal from on the next sign-in, rather than leaving
+      // the account permanently broken.
+      try {
+        await reauth();
+        await deleteUser(firebaseUser);
+      } catch (e2) {
+        console.error("HUM: Auth account deletion failed after retry", e2);
+        return { ok: false, error: t("errors.network") };
+      }
+    } else {
+      console.error("HUM: Auth account deletion failed", e);
+      return { ok: false, error: t("errors.network") };
+    }
+  }
+
+  // Only device-local, non-account state HUM ever put in localStorage
+  // (see the LOCAL (DEVICE-ONLY) STORAGE LAYER section) — cleared last,
+  // only once the account itself is actually gone.
+  localStorage.removeItem(KEYS.LANG);
+  localStorage.removeItem(KEYS.THEME);
+
+  state.me = null;
+  return { ok: true };
 }
 
 async function updateProfile(updates) {
@@ -3898,6 +4303,15 @@ function renderChatMessages() {
       // for BOTH participants — see deleteMessageForEveryone. The
       // original fields are left alone in Firestore; only rendering
       // hides them.
+      // Reply preview quoting the original message this one replies to
+      // (see replyPreviewMarkup below) — omitted for a tombstoned
+      // message same as menuMarkup/reactBtnMarkup above (spec: a
+      // deleted reply must not display its reply preview), and simply
+      // absent for any message that isn't a reply at all (m.replyTo
+      // unset).
+      const replyMarkup = isDeletedForEveryone
+        ? ""
+        : replyPreviewMarkup(m, me);
       const bubbleMarkup = isDeletedForEveryone
         ? `<div class="chat-msg__bubble chat-msg__bubble--deleted">${escapeHtml(t("chat.messageDeleted"))}</div>`
         : m.type === "voice" && m.voicePath
@@ -3934,6 +4348,7 @@ function renderChatMessages() {
         : reactionsBarMarkup(m, me.uid);
       return `
         <div class="chat-msg ${isOwn ? "chat-msg--own" : "chat-msg--theirs"}" data-msg-id="${escapeHtml(m.id || "")}" data-msg-own="${isOwn}">
+          ${replyMarkup}
           ${bubbleMarkup}
           ${reactionsMarkup}
           <div class="chat-msg__time">${escapeHtml(formatCompactTime(m.ts, getLang()))}${editedTagMarkup}${receiptMarkup}${reactBtnMarkup}${menuMarkup}</div>
@@ -4009,6 +4424,48 @@ function reactionsBarMarkup(m, meUid) {
     `;
   }).join("");
   return chips ? `<div class="chat-msg__reactions">${chips}</div>` : "";
+}
+
+// Renders the small quoted "replying to" block shown above a reply
+// message's own content (see renderChatMessages above and section 4/5
+// of the spec) — a clickable button (data-reply-preview/
+// data-reply-target, handled by the els.chatMessages click delegation
+// further down) that scrolls to and briefly highlights the original
+// message. Absent entirely for a message that isn't a reply
+// (m.replyTo unset). Looks the original message up in the currently
+// loaded state.chatMessagesData (not the post-"delete for me" filtered
+// `messages` renderChatMessages is iterating over, since a message can
+// be findable-but-hidden-from-just-me and still perfectly valid to
+// preview/jump to) — if it isn't there at all, or it's since been
+// tombstoned via "delete for everyone", this renders the translated
+// "unavailable" state instead of a live link, covering both section 5
+// (message no longer in the loaded chat) and section 13 (original
+// deleted for everyone) from the spec with the same code path.
+function replyPreviewMarkup(m, me) {
+  const replyTo = m && m.replyTo;
+  if (!replyTo || !replyTo.messageId) return "";
+  const other = state.activeChatUser;
+  const original = (state.chatMessagesData || []).find(
+    (x) => x.id === replyTo.messageId,
+  );
+  const isUnavailable = !original || original.deletedForEveryone === true;
+  if (isUnavailable) {
+    return `
+      <div class="chat-msg__reply-preview chat-msg__reply-preview--unavailable">
+        <span class="chat-msg__reply-preview-text">${escapeHtml(t("chat.reply.unavailable"))}</span>
+      </div>
+    `;
+  }
+  const authorName =
+    !!me && replyTo.from === me.uid
+      ? me.displayName || ""
+      : (other && other.displayName) || "";
+  return `
+    <button type="button" class="chat-msg__reply-preview" data-reply-preview data-reply-target="${escapeHtml(replyTo.messageId)}">
+      <span class="chat-msg__reply-preview-name">${escapeHtml(authorName)}</span>
+      <span class="chat-msg__reply-preview-text">${escapeHtml(replyPreviewText(replyTo))}</span>
+    </button>
+  `;
 }
 
 // Signed URLs for private chat-files objects are short-lived (see
@@ -4188,6 +4645,10 @@ const els = {
   chatBlockedNotice: document.getElementById("chatBlockedNotice"),
   chatBlockedUnblockBtn: document.getElementById("chatBlockedUnblockBtn"),
   chatMessages: document.getElementById("chatMessages"),
+  chatReplyBar: document.getElementById("chatReplyBar"),
+  chatReplyBarName: document.getElementById("chatReplyBarName"),
+  chatReplyBarText: document.getElementById("chatReplyBarText"),
+  chatReplyCancelBtn: document.getElementById("chatReplyCancelBtn"),
   chatEditBar: document.getElementById("chatEditBar"),
   chatEditCancelBtn: document.getElementById("chatEditCancelBtn"),
   chatComposerForm: document.getElementById("chatComposerForm"),
@@ -4216,7 +4677,16 @@ const els = {
   settingsAccountHint: document.getElementById("settingsAccountHint"),
   settingsUsername: document.getElementById("settingsUsername"),
   settingsLogout: document.getElementById("settingsLogout"),
+  settingsDeleteAccount: document.getElementById("settingsDeleteAccount"),
   settingsBlockedList: document.getElementById("settingsBlockedList"),
+
+  deleteAccountModalBackdrop: document.getElementById(
+    "deleteAccountModalBackdrop",
+  ),
+  deleteAccountForm: document.getElementById("deleteAccountForm"),
+  deleteAccountPassword: document.getElementById("deleteAccountPassword"),
+  deleteAccountCancel: document.getElementById("deleteAccountCancel"),
+  deleteAccountConfirm: document.getElementById("deleteAccountConfirm"),
   themeToggle: document.getElementById("themeToggle"),
   chatWallpaper: document.getElementById("chatWallpaper"),
   chatWallpaperParticles: document.getElementById("chatWallpaperParticles"),
@@ -4295,6 +4765,19 @@ let state = {
   // leaveActiveChat/stopAllConversationWatchers) so it can never leak
   // across chats.
   editingMessageId: null,
+
+  // The full message object currently being replied to in the composer
+  // (see startReplyMessage/cancelReplyMessage/buildReplyToPayload
+  // below), or null when the composer isn't drafting a reply. Unlike
+  // editingMessageId this holds the whole original message, not just
+  // its id — the reply bar needs its sender/text/type to render the
+  // "Replying to …" preview, and buildReplyToPayload derives the
+  // replyTo metadata actually sent with the next message from it.
+  // Reply and Edit are mutually exclusive composer states — see
+  // startReplyMessage/startEditMessage, each of which safely cancels
+  // the other before entering its own mode — so this and
+  // editingMessageId are never both non-null at once.
+  replyingToMessage: null,
 };
 
 // Stops any live Firestore listeners this device has open — called on
@@ -4328,6 +4811,9 @@ function stopAllConversationWatchers() {
   // cancelVoiceRecording/stopVoicePlayback just below) — the composer
   // itself is about to be torn down along with everything else here.
   state.editingMessageId = null;
+  // Same idea for a stray in-progress reply draft — see
+  // startReplyMessage/cancelReplyMessage.
+  state.replyingToMessage = null;
   // Detach this device's own presence .info/connected listener, and
   // every "watching someone else's presence" listener currently open
   // on any screen — nothing about anyone's online status should keep
@@ -4581,6 +5067,7 @@ document.addEventListener("keydown", (e) => {
     closeActionMenu();
     closeReactionPicker();
     cancelEditMessage();
+    cancelReplyMessage();
   }
 });
 window.addEventListener("resize", () => {
@@ -4674,6 +5161,16 @@ function buildPersonActions(otherUser) {
 // convenience, not the actual security boundary.
 function buildMessageActions(convId, message, isOwn) {
   const actions = [];
+  // Reply works for every message type (text/voice/image/file) and for
+  // either participant's messages — the only thing that keeps it out
+  // of the menu entirely is a tombstoned ("delete for everyone")
+  // message, which already has no menu at all (see the isDeletedForEveryone
+  // guard around menuMarkup in renderChatMessages, which is what this
+  // function is only ever called for in the first place).
+  actions.push({
+    label: t("menu.reply"),
+    onSelect: () => startReplyMessage(convId, message),
+  });
   // Edit is only ever offered for the caller's own plain text messages
   // — canEditMessage() (see the EDIT MESSAGE section above) is the same
   // gate startEditMessage() itself re-checks, so this is purely a UI
@@ -4882,8 +5379,9 @@ function leaveActiveChat() {
   // open — reset it and the composer UI the same way switching to a
   // different conversation does (see cancelEditMessage/openChat),
   // rather than leaving it to silently point at a message that's now
-  // out of view.
+  // out of view. Same reasoning for a stray reply draft.
   cancelEditMessage();
+  cancelReplyMessage();
   setPanelView("chats");
   setMainView("welcome");
   closeMobileDetail();
@@ -5314,6 +5812,107 @@ async function doLogout() {
 els.navLogout.addEventListener("click", doLogout);
 els.settingsLogout.addEventListener("click", doLogout);
 
+/* ================= DELETE ACCOUNT ================= */
+// Own small modal (not the shared openConfirmModal) because this needs
+// a password field and a busy/loading state mid-confirmation, neither
+// of which the generic Remove/Block confirm modal supports.
+function openDeleteAccountModal() {
+  if (!els.deleteAccountModalBackdrop) return;
+  clearErrors(["deleteAccountPassword", "deleteAccountForm"]);
+  if (els.deleteAccountPassword) els.deleteAccountPassword.value = "";
+  els.deleteAccountModalBackdrop.hidden = false;
+  if (els.deleteAccountPassword) els.deleteAccountPassword.focus();
+}
+function closeDeleteAccountModal() {
+  if (!els.deleteAccountModalBackdrop) return;
+  els.deleteAccountModalBackdrop.hidden = true;
+  if (els.deleteAccountPassword) els.deleteAccountPassword.value = "";
+  clearErrors(["deleteAccountPassword", "deleteAccountForm"]);
+}
+if (els.settingsDeleteAccount) {
+  els.settingsDeleteAccount.addEventListener("click", openDeleteAccountModal);
+}
+if (els.deleteAccountCancel) {
+  els.deleteAccountCancel.addEventListener("click", closeDeleteAccountModal);
+}
+if (els.deleteAccountModalBackdrop) {
+  els.deleteAccountModalBackdrop.addEventListener("click", (e) => {
+    if (e.target === els.deleteAccountModalBackdrop) closeDeleteAccountModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.deleteAccountModalBackdrop.hidden) {
+      closeDeleteAccountModal();
+    }
+  });
+}
+if (els.deleteAccountForm) {
+  els.deleteAccountForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearErrors(["deleteAccountPassword", "deleteAccountForm"]);
+    const password = els.deleteAccountPassword
+      ? els.deleteAccountPassword.value
+      : "";
+    if (!password) {
+      setFieldError(
+        "deleteAccountPassword",
+        t("settings.deleteAccount.passwordRequired"),
+      );
+      return;
+    }
+
+    setFormBusy(els.deleteAccountForm, true);
+    if (els.deleteAccountConfirm) {
+      els.deleteAccountConfirm.disabled = true;
+      els.deleteAccountConfirm.textContent = t(
+        "settings.deleteAccount.deleting",
+      );
+    }
+    if (els.deleteAccountCancel) els.deleteAccountCancel.disabled = true;
+    if (els.deleteAccountPassword) els.deleteAccountPassword.disabled = true;
+
+    const result = await deleteUserAccount(password);
+
+    if (!result.ok) {
+      setFormBusy(els.deleteAccountForm, false);
+      if (els.deleteAccountConfirm) {
+        els.deleteAccountConfirm.disabled = false;
+        els.deleteAccountConfirm.textContent = t(
+          "settings.deleteAccount.confirmButton",
+        );
+      }
+      if (els.deleteAccountCancel) els.deleteAccountCancel.disabled = false;
+      if (els.deleteAccountPassword) els.deleteAccountPassword.disabled = false;
+      setFieldError("deleteAccountForm", result.error);
+      return;
+    }
+
+    // Success — same UI reset doLogout() does (onAuthStateChanged will
+    // also fire from deleteUser() signing the session out and repeat
+    // this harmlessly; this is just for instant feedback instead of
+    // waiting on that round trip).
+    els.deleteAccountModalBackdrop.hidden = true;
+    if (els.deleteAccountConfirm) {
+      els.deleteAccountConfirm.disabled = false;
+      els.deleteAccountConfirm.textContent = t(
+        "settings.deleteAccount.confirmButton",
+      );
+    }
+    if (els.deleteAccountCancel) els.deleteAccountCancel.disabled = false;
+    if (els.deleteAccountPassword) els.deleteAccountPassword.disabled = false;
+    state.mainView = "welcome";
+    state.activePanelView = "chats";
+    state.viewingUsername = null;
+    state.viewingUser = null;
+    state.activeChatUsername = null;
+    state.activeChatUser = null;
+    closeActionMenu();
+    els.appShell.hidden = true;
+    els.authScreen.hidden = false;
+    showAuthTab("login");
+    showToast(t("toast.accountDeleted"));
+  });
+}
+
 /* ================= APP SHELL: PANEL VIEW (chats/people) ================= */
 function setPanelView(view) {
   state.activePanelView = view;
@@ -5644,10 +6243,12 @@ async function openChat(username, navigate) {
   if (navigate) openMobileDetail();
   // Clear any leftover draft from a previously open conversation so text
   // typed for one person never leaks into a different person's chat —
-  // and the same for an in-progress edit: it belongs to a specific
-  // message in a specific conversation, so it's never carried over to
-  // whatever chat is being opened now (see cancelEditMessage above).
+  // and the same for an in-progress edit or reply: both belong to a
+  // specific message in a specific conversation, so neither is ever
+  // carried over to whatever chat is being opened now (see
+  // cancelEditMessage/cancelReplyMessage above).
   cancelEditMessage();
+  cancelReplyMessage();
   if (els.chatInput) els.chatInput.value = "";
   autoSizeChatInput();
 
@@ -5820,6 +6421,11 @@ function canEditMessage(message, meUid) {
 function startEditMessage(convId, message) {
   const me = currentUser();
   if (!els.chatInput || !canEditMessage(message, me && me.uid)) return;
+  // Reply and Edit share the same composer surface and can never both
+  // be active at once — starting Edit while a reply is being drafted
+  // safely cancels the reply first (see startReplyMessage's mirror of
+  // this for the other direction).
+  if (state.replyingToMessage) cancelReplyMessage();
   state.editingMessageId = message.id;
   els.chatInput.value = message.text || "";
   autoSizeChatInput();
@@ -5886,6 +6492,131 @@ async function saveEditedMessage() {
   showToast(t("toast.messageEdited"), "success");
 }
 
+/* ===================================================================
+   SECTION: REPLY MESSAGE — composer UI
+   Mirrors EDIT MESSAGE's composer UI immediately above: reuses the
+   existing composer instead of a modal, with its own compact bar
+   (#chatReplyBar, hidden by default — see index.html) appearing above
+   the composer, right where #chatEditBar does. state.replyingToMessage
+   holds the FULL original message object (not just its id), since the
+   reply bar needs its sender/text/type to render, and
+   buildReplyToPayload() (used from sendChatMessage/sendVoiceMessage/
+   sendOneAttachment below) derives the actual replyTo metadata that
+   gets stored on the next message from it. Reply and Edit are strictly
+   mutually exclusive — see the cancelReplyMessage()/cancelEditMessage()
+   calls in each other's start* function above/below.
+=================================================================== */
+
+// Shared "what does this reply point at, in one line" renderer — used
+// both for the composer's reply bar (a message being drafted) and for
+// the quoted preview shown inside an already-sent reply message (see
+// replyPreviewMarkup below). Both a live message object and a stored
+// replyTo metadata object share the same `type`/`text` shape, so one
+// function covers both call sites without needing to know which one
+// it was given.
+function replyPreviewText(meta) {
+  if (!meta) return "";
+  if (!meta.type || meta.type === "text") return meta.text || "";
+  if (meta.type === "voice") return "🎤 " + t("chat.reply.voice");
+  if (meta.type === "image") return "🖼 " + t("chat.reply.image");
+  if (meta.type === "file") return "📎 " + t("chat.reply.file");
+  return meta.text || "";
+}
+
+// Builds the replyTo metadata actually stored on the next message from
+// whatever's currently being replied to, or null if nothing is. Only
+// ever includes the small pointer/preview fields described in the
+// spec (messageId/from/text/type) — never file bytes, audio bytes, or
+// Supabase URLs, which is what keeps this safe to store directly on
+// the message doc rather than needing its own Storage entry. If the
+// user is replying to a message that is itself a reply, only the
+// selected message's own content is referenced here — its `replyTo`
+// (if any) is intentionally ignored, so reply chains never nest more
+// than one level deep in what's actually displayed.
+function buildReplyToPayload(message) {
+  if (!message || !message.id) return null;
+  return {
+    messageId: message.id,
+    from: message.from,
+    text: message.type ? "" : message.text || "",
+    type: message.type || "text",
+  };
+}
+
+// Renders the composer's reply bar body (name line + quoted preview)
+// from state.replyingToMessage. The name line is the one place Reply
+// uses the special "replying to yourself" wording from the spec — the
+// preview shown inside an already-sent message (replyPreviewMarkup)
+// always shows the original sender's actual name instead, same as the
+// examples in the spec.
+function renderReplyBar() {
+  const message = state.replyingToMessage;
+  if (!message || !els.chatReplyBar) return;
+  const me = currentUser();
+  const other = state.activeChatUser;
+  const isOwn = !!(me && message.from === me.uid);
+  if (els.chatReplyBarName) {
+    els.chatReplyBarName.textContent = isOwn
+      ? t("chat.reply.replyingToSelf")
+      : t("chat.reply.replyingTo", {
+          name: (other && other.displayName) || "",
+        });
+  }
+  if (els.chatReplyBarText) {
+    els.chatReplyBarText.textContent = replyPreviewText(message);
+  }
+}
+
+// Entry point into reply mode — mirrors startEditMessage's shape.
+// Refuses to start a reply on a message that's been tombstoned via
+// "delete for everyone" (there'd be nothing left to quote), same
+// spirit as canEditMessage's own guards, re-checked here rather than
+// trusted from the caller alone.
+function startReplyMessage(convId, message) {
+  const me = currentUser();
+  if (!els.chatInput || !me || !message || !message.id) return;
+  if (message.deletedForEveryone === true) return;
+  if (state.editingMessageId) cancelEditMessage();
+  state.replyingToMessage = message;
+  if (els.chatReplyBar) els.chatReplyBar.hidden = false;
+  renderReplyBar();
+  els.chatInput.focus();
+}
+
+// Restores the composer to its normal state without touching
+// Firestore — the explicit Cancel button, sending the reply, switching
+// conversations, leaving the chat, and starting an Edit all funnel
+// through this, same as cancelEditMessage's role for Edit.
+function cancelReplyMessage() {
+  if (!state.replyingToMessage) return;
+  state.replyingToMessage = null;
+  if (els.chatReplyBar) els.chatReplyBar.hidden = true;
+}
+
+// Scrolls a reply preview's original message into view and briefly
+// highlights it (see replyPreviewMarkup/the chatMessages click
+// delegation below). If the message isn't in the currently loaded
+// chat — already handled at render time by replyPreviewMarkup showing
+// the "unavailable" state instead of a clickable preview, but
+// re-checked here too in case the underlying data changed between
+// render and click — this does nothing but show a small toast, per
+// spec: no error, nothing broken.
+function scrollToMessageAndHighlight(messageId) {
+  if (!messageId || !els.chatMessages) return;
+  const target = Array.from(
+    els.chatMessages.querySelectorAll(".chat-msg"),
+  ).find((el) => el.getAttribute("data-msg-id") === messageId);
+  if (!target) {
+    showToast(t("chat.reply.unavailable"));
+    return;
+  }
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("chat-msg--highlight");
+  window.setTimeout(() => {
+    target.classList.remove("chat-msg--highlight");
+  }, 1600);
+}
+
 async function sendChatMessage() {
   // Editing takes over the composer's submit path entirely — Enter and
   // the send button both funnel through here already (see the
@@ -5907,6 +6638,15 @@ async function sendChatMessage() {
   if (!text) return;
   const otherUsername = state.activeChatUsername;
 
+  // Capture the reply draft (if any) and derive its wire-format
+  // metadata before clearing it — see buildReplyToPayload/
+  // cancelReplyMessage above. Kept around locally (rather than just
+  // reading state.replyingToMessage again later) so it can be restored
+  // if the send below fails, same spirit as restoring the text draft.
+  const replyingMessage = state.replyingToMessage;
+  const replyTo = buildReplyToPayload(replyingMessage);
+  cancelReplyMessage();
+
   // Optimistic clear: the composer empties immediately on submit (real
   // messenger feel) rather than waiting on the network round trip. The
   // live message listener from openChat() will render the sent message
@@ -5924,7 +6664,7 @@ async function sendChatMessage() {
   try {
     other = await findUserByUsername(otherUsername);
     if (!other) throw new Error("recipient not found");
-    await addMessage(me, other, text);
+    await addMessage(me, other, text, replyTo ? { replyTo } : undefined);
   } catch (e) {
     console.error("HUM: failed to send message", e);
     // permission-denied here almost always means the Firestore rules
@@ -5940,9 +6680,15 @@ async function sendChatMessage() {
       isPermissionError ? t("errors.sendFailed") : t("errors.network"),
       "error",
     );
-    // Restore the draft so the person doesn't lose what they typed.
+    // Restore the draft so the person doesn't lose what they typed —
+    // and the reply context it was attached to, same reasoning.
     els.chatInput.value = text;
     autoSizeChatInput();
+    if (replyingMessage) {
+      state.replyingToMessage = replyingMessage;
+      if (els.chatReplyBar) els.chatReplyBar.hidden = false;
+      renderReplyBar();
+    }
   }
 }
 
@@ -5953,6 +6699,10 @@ els.chatComposerForm.addEventListener("submit", (e) => {
 els.chatEditCancelBtn &&
   els.chatEditCancelBtn.addEventListener("click", () => {
     cancelEditMessage();
+  });
+els.chatReplyCancelBtn &&
+  els.chatReplyCancelBtn.addEventListener("click", () => {
+    cancelReplyMessage();
   });
 els.chatInput.addEventListener("input", autoSizeChatInput);
 els.chatInput.addEventListener("input", handleComposerTypingInput);
@@ -6029,6 +6779,19 @@ document.addEventListener("keydown", (e) => {
 // renderChatMessages above), and a second listener on the same
 // element+event would be a duplicate rather than an extension.
 els.chatMessages.addEventListener("click", (e) => {
+  // Reply preview quoted block (see replyPreviewMarkup above) — jumps
+  // to and briefly highlights the original message it quotes. Checked
+  // first since it's the innermost/most specific target a click inside
+  // a reply message could land on.
+  const replyPreviewBtn = e.target.closest("[data-reply-preview]");
+  if (replyPreviewBtn) {
+    e.stopPropagation();
+    scrollToMessageAndHighlight(
+      replyPreviewBtn.getAttribute("data-reply-target"),
+    );
+    return;
+  }
+
   const menuBtn = e.target.closest("[data-msg-menu]");
   if (menuBtn) {
     e.stopPropagation();
@@ -6357,6 +7120,127 @@ window.addEventListener("resize", syncViewportHeight);
 window.addEventListener("orientationchange", syncViewportHeight);
 syncViewportHeight();
 
+// ===================================================================
+// VISUAL POLISH — pointer-tracked 3D tilt + button ripple
+// Two small, fully self-contained enhancements layered on top of the
+// existing UI. Both are pure event-delegation on `document`, so they
+// keep working for elements that don't exist yet at load time
+// (profile hero, chat bubbles, appearance cards, dynamically rendered
+// rows) without any MutationObserver or per-render wiring. Neither
+// touches app state, storage, or any existing function in this file.
+// Both bail out completely — no listeners attached at all — for
+// prefers-reduced-motion or a coarse/touch-only pointer, matching the
+// prefers-reduced-motion guard already used everywhere else in HUM
+// (see the [hidden]/animation rules in style.css).
+// ===================================================================
+
+// Cards/avatars/modals it's worth giving a real pointer-follow 3D
+// tilt to. Deliberately excludes chat bubbles, list rows and nav
+// items — those get their own lightweight hover transforms straight
+// in style.css instead, since tilting every message would be both
+// distracting and, with long chat histories, a real perf cost.
+const TILT_SELECTOR =
+  ".lang-screen__card, .auth-card, .appearance-card, .avatar-picker__preview, " +
+  ".modal, .profile-hero .avatar, .brand-mark__glyph--lg, .empty-state__art";
+
+// Everything that should flash a short ripple where it was clicked/tapped.
+const RIPPLE_SELECTOR =
+  ".btn, .icon-btn, .chat-composer__attach, .chat-composer__mic, " +
+  ".nav-rail__item, .mobile-nav__item, .lang-choice, .lang-option, " +
+  ".lang-pill, .auth-tab, .appearance-card";
+
+// Reuses the existing prefersReducedMotion() defined earlier in this
+// file (see the wallpaper-particle section) — same guard, one source
+// of truth.
+function initTiltEffects() {
+  // Pointer-follow tilt only makes sense for an actual mouse/trackpad;
+  // on touch devices there's no hover to track, so skip attaching
+  // anything rather than fighting real scrolling/tap gestures.
+  if (
+    prefersReducedMotion() ||
+    !(window.matchMedia && window.matchMedia("(pointer: fine)").matches)
+  ) {
+    return;
+  }
+
+  let activeEl = null;
+  const resetActive = () => {
+    if (activeEl) {
+      activeEl.style.transform = "";
+      activeEl = null;
+    }
+  };
+
+  document.addEventListener(
+    "pointermove",
+    (e) => {
+      const el = e.target.closest ? e.target.closest(TILT_SELECTOR) : null;
+      if (!el) {
+        resetActive();
+        return;
+      }
+      activeEl = el;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const px = (e.clientX - rect.left) / rect.width;
+      const py = (e.clientY - rect.top) / rect.height;
+      const rotateY = (px - 0.5) * 12;
+      const rotateX = (0.5 - py) * 12;
+      el.style.transform = `perspective(900px) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
+    },
+    { passive: true },
+  );
+
+  // Non-bubbling pointerleave events still reach a capturing listener
+  // on document, but the simplest reliable reset is `pointerout` with
+  // relatedTarget === null, which fires once when the pointer leaves
+  // the browser viewport entirely (the case the pointermove branch
+  // above can't catch, since no further pointermove fires after that).
+  document.addEventListener("pointerout", (e) => {
+    if (!e.relatedTarget) resetActive();
+  });
+  window.addEventListener("blur", resetActive);
+}
+
+function spawnRipple(el, clientX, clientY) {
+  const rect = el.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height) * 1.4;
+  const span = document.createElement("span");
+  span.className = "btn-ripple";
+  span.style.width = span.style.height = `${size}px`;
+  span.style.left = `${clientX - rect.left - size / 2}px`;
+  span.style.top = `${clientY - rect.top - size / 2}px`;
+  el.appendChild(span);
+  span.addEventListener(
+    "animationend",
+    () => {
+      span.remove();
+    },
+    { once: true },
+  );
+}
+
+function initButtonRipple() {
+  if (prefersReducedMotion()) return;
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      // Only the primary button/touch/pen contact spawns a ripple.
+      if (e.button !== undefined && e.button !== 0) return;
+      const el = e.target.closest ? e.target.closest(RIPPLE_SELECTOR) : null;
+      if (!el || el.disabled) return;
+      // Ripple needs to be clipped to the control's own shape — every
+      // targeted selector already sets this in style.css, but this is
+      // a harmless safety net for any future addition to the list.
+      const cs = getComputedStyle(el);
+      if (cs.position === "static") el.style.position = "relative";
+      if (cs.overflow === "visible") el.style.overflow = "hidden";
+      spawnRipple(el, e.clientX, e.clientY);
+    },
+    { passive: true },
+  );
+}
+
 function init() {
   if (FIREBASE_CONFIG_ERROR) {
     // Nothing below this can work without real Firebase config — show
@@ -6372,6 +7256,8 @@ function init() {
   }
 
   initTheme();
+  initTiltEffects();
+  initButtonRipple();
   applyTranslations();
   wireLangControls();
   showAuthTab("login");

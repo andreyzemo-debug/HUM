@@ -114,8 +114,8 @@
         </div>
         <h1 class="lang-screen__title">Firebase setup needed</h1>
         <p class="lang-screen__subtitle">
-          HUM's account and message storage runs on your own Firebase
-          project, and it isn't configured yet:
+          HUM's account and message storage runs on your own Firebase project,
+          and it isn't configured yet:
         </p>
         <p class="config-error__detail" id="firebaseConfigErrorDetail"></p>
         <p class="lang-screen__subtitle" style="margin-bottom: 10px">
@@ -128,16 +128,16 @@
             file.
           </li>
           <li>
-            Replace every placeholder value with your real Firebase
-            project's config — Firebase console → Project settings →
-            General → "Your apps".
+            Replace every placeholder value with your real Firebase project's
+            config — Firebase console → Project settings → General → "Your
+            apps".
           </li>
           <li>Save the file and reload this page.</li>
         </ol>
         <p class="lang-screen__subtitle" style="margin-bottom: 0">
           Full step-by-step setup (creating the project, enabling
-          Authentication, creating Firestore, security rules) is in the
-          comment block at the very top of <code>app.js</code>.
+          Authentication, creating Firestore, security rules) is in the comment
+          block at the very top of <code>app.js</code>.
         </p>
       </div>
     </main>
@@ -740,50 +740,140 @@
             <p class="settings-group__hint" data-i18n="settings.appearanceHint">
               Pick how HUM looks and feels.
             </p>
-            <div class="appearance-grid" id="themeToggle" role="group" aria-label="Appearance">
-              <button type="button" class="appearance-card" data-theme="dark" aria-pressed="false">
+            <div
+              class="appearance-grid"
+              id="themeToggle"
+              role="group"
+              aria-label="Appearance"
+            >
+              <button
+                type="button"
+                class="appearance-card"
+                data-theme="dark"
+                aria-pressed="false"
+              >
                 <span class="appearance-card__preview" aria-hidden="true">
                   <span class="appearance-card__scene"></span>
                   <span class="appearance-card__icon">🌙</span>
                 </span>
-                <span class="appearance-card__name" data-i18n="settings.modeDark">Dark</span>
-                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+                <span
+                  class="appearance-card__name"
+                  data-i18n="settings.modeDark"
+                  >Dark</span
+                >
+                <svg
+                  class="appearance-card__check"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                >
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
               </button>
 
-              <button type="button" class="appearance-card" data-theme="light" aria-pressed="false">
+              <button
+                type="button"
+                class="appearance-card"
+                data-theme="light"
+                aria-pressed="false"
+              >
                 <span class="appearance-card__preview" aria-hidden="true">
                   <span class="appearance-card__scene"></span>
                   <span class="appearance-card__icon">☀️</span>
                 </span>
-                <span class="appearance-card__name" data-i18n="settings.modeLight">Light</span>
-                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+                <span
+                  class="appearance-card__name"
+                  data-i18n="settings.modeLight"
+                  >Light</span
+                >
+                <svg
+                  class="appearance-card__check"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                >
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
               </button>
 
-              <button type="button" class="appearance-card" data-theme="sakura" aria-pressed="false">
+              <button
+                type="button"
+                class="appearance-card"
+                data-theme="sakura"
+                aria-pressed="false"
+              >
                 <span class="appearance-card__preview" aria-hidden="true">
                   <span class="appearance-card__scene"></span>
                   <span class="appearance-card__icon">🌸</span>
                 </span>
-                <span class="appearance-card__name" data-i18n="settings.modeSakura">Sakura</span>
-                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+                <span
+                  class="appearance-card__name"
+                  data-i18n="settings.modeSakura"
+                  >Sakura</span
+                >
+                <svg
+                  class="appearance-card__check"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                >
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
               </button>
 
-              <button type="button" class="appearance-card" data-theme="volcano" aria-pressed="false">
+              <button
+                type="button"
+                class="appearance-card"
+                data-theme="volcano"
+                aria-pressed="false"
+              >
                 <span class="appearance-card__preview" aria-hidden="true">
                   <span class="appearance-card__scene"></span>
                   <span class="appearance-card__icon">🌋</span>
                 </span>
-                <span class="appearance-card__name" data-i18n="settings.modeVolcano">Volcano</span>
-                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+                <span
+                  class="appearance-card__name"
+                  data-i18n="settings.modeVolcano"
+                  >Volcano</span
+                >
+                <svg
+                  class="appearance-card__check"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                >
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
               </button>
 
-              <button type="button" class="appearance-card" data-theme="forest" aria-pressed="false">
+              <button
+                type="button"
+                class="appearance-card"
+                data-theme="forest"
+                aria-pressed="false"
+              >
                 <span class="appearance-card__preview" aria-hidden="true">
                   <span class="appearance-card__scene"></span>
                   <span class="appearance-card__icon">🌲</span>
                 </span>
-                <span class="appearance-card__name" data-i18n="settings.modeForest">Forest</span>
-                <svg class="appearance-card__check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+                <span
+                  class="appearance-card__name"
+                  data-i18n="settings.modeForest"
+                  >Forest</span
+                >
+                <svg
+                  class="appearance-card__check"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                >
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
               </button>
             </div>
           </div>
@@ -791,8 +881,8 @@
           <div class="settings-group">
             <h3 data-i18n="settings.privacy">Privacy</h3>
             <p class="settings-group__hint" data-i18n="settings.privacyHint">
-              People you've blocked can't message you, and you won't see
-              them in search.
+              People you've blocked can't message you, and you won't see them in
+              search.
             </p>
             <div class="blocked-list" id="settingsBlockedList"></div>
           </div>
@@ -802,14 +892,24 @@
             <p class="settings-group__hint" id="settingsAccountHint">
               Signed in as <span id="settingsUsername">—</span>.
             </p>
-            <button
-              type="button"
-              class="btn btn--danger btn--small"
-              id="settingsLogout"
-              data-i18n="nav.logout"
-            >
-              Log out
-            </button>
+            <div class="settings-danger-actions">
+              <button
+                type="button"
+                class="btn btn--danger btn--small"
+                id="settingsLogout"
+                data-i18n="nav.logout"
+              >
+                Log out
+              </button>
+              <button
+                type="button"
+                class="btn btn--danger btn--small"
+                id="settingsDeleteAccount"
+                data-i18n="settings.deleteAccount.button"
+              >
+                Delete account
+              </button>
+            </div>
           </div>
         </div>
 
@@ -837,7 +937,10 @@
             aria-hidden="true"
           >
             <div class="chat-wallpaper__scene"></div>
-            <div class="chat-wallpaper__particles" id="chatWallpaperParticles"></div>
+            <div
+              class="chat-wallpaper__particles"
+              id="chatWallpaperParticles"
+            ></div>
           </div>
           <div class="chat-wallpaper__overlay" aria-hidden="true"></div>
 
@@ -865,18 +968,92 @@
           </header>
 
           <div class="chat-blocked-notice" id="chatBlockedNotice" hidden>
-            <span data-i18n="chat.blockedNotice">You've blocked this person.</span>
-            <button type="button" class="link-btn" id="chatBlockedUnblockBtn" data-i18n="common.unblock">Unblock</button>
+            <span data-i18n="chat.blockedNotice"
+              >You've blocked this person.</span
+            >
+            <button
+              type="button"
+              class="link-btn"
+              id="chatBlockedUnblockBtn"
+              data-i18n="common.unblock"
+            >
+              Unblock
+            </button>
           </div>
 
           <div class="chat-messages" id="chatMessages"></div>
 
-          <div class="chat-edit-bar" id="chatEditBar" hidden>
-            <svg class="chat-edit-bar__icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-              <path d="M4 20h4l10.5-10.5a2.83 2.83 0 0 0-4-4L4 16v4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <div class="chat-reply-bar" id="chatReplyBar" hidden>
+            <svg
+              class="chat-reply-bar__icon"
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              aria-hidden="true"
+            >
+              <path
+                d="M9 14 4 9l5-5M4 9h9a6 6 0 0 1 6 6v3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
-            <span class="chat-edit-bar__label" data-i18n="chat.edit.editingLabel">Editing message</span>
-            <button type="button" class="link-btn chat-edit-bar__cancel" id="chatEditCancelBtn" data-i18n="common.cancel">Cancel</button>
+            <div class="chat-reply-bar__body">
+              <div class="chat-reply-bar__name" id="chatReplyBarName"></div>
+              <div class="chat-reply-bar__text" id="chatReplyBarText"></div>
+            </div>
+            <button
+              type="button"
+              class="icon-btn chat-reply-bar__cancel"
+              id="chatReplyCancelBtn"
+              data-i18n-title="common.cancel"
+              title="Cancel"
+              aria-label="Cancel"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <path
+                  d="M6 6l12 12M18 6L6 18"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <div class="chat-edit-bar" id="chatEditBar" hidden>
+            <svg
+              class="chat-edit-bar__icon"
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 20h4l10.5-10.5a2.83 2.83 0 0 0-4-4L4 16v4Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span
+              class="chat-edit-bar__label"
+              data-i18n="chat.edit.editingLabel"
+              >Editing message</span
+            >
+            <button
+              type="button"
+              class="link-btn chat-edit-bar__cancel"
+              id="chatEditCancelBtn"
+              data-i18n="common.cancel"
+            >
+              Cancel
+            </button>
           </div>
 
           <form class="chat-composer" id="chatComposerForm">
@@ -899,7 +1076,14 @@
               aria-label="Attach file"
             >
               <svg viewBox="0 0 24 24" width="18" height="18">
-                <path d="M17 7l-7.5 7.5a2.5 2.5 0 0 0 3.54 3.54L21.5 10a4.5 4.5 0 1 0-6.36-6.36L6.5 12.28a6.5 6.5 0 1 0 9.19 9.19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                <path
+                  d="M17 7l-7.5 7.5a2.5 2.5 0 0 0 3.54 3.54L21.5 10a4.5 4.5 0 1 0-6.36-6.36L6.5 12.28a6.5 6.5 0 1 0 9.19 9.19"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
             </button>
             <textarea
@@ -920,14 +1104,40 @@
             >
               <svg viewBox="0 0 24 24" width="18" height="18">
                 <rect x="9" y="2" width="6" height="12" rx="3" />
-                <path d="M5 11a7 7 0 0 0 14 0M12 18v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path
+                  d="M5 11a7 7 0 0 0 14 0M12 18v4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
               </svg>
             </button>
-            <div class="chat-composer__voice-bar" id="chatVoiceRecordingBar" hidden>
+            <div
+              class="chat-composer__voice-bar"
+              id="chatVoiceRecordingBar"
+              hidden
+            >
               <span class="chat-composer__voice-dot" aria-hidden="true"></span>
-              <span class="chat-composer__voice-time" id="chatVoiceRecordTime">0:00</span>
-              <button type="button" class="link-btn" id="chatVoiceCancelBtn" data-i18n="chat.voice.cancel">Cancel</button>
-              <button type="button" class="btn btn--primary btn--small" id="chatVoiceStopBtn" data-i18n="chat.voice.stop">Stop</button>
+              <span class="chat-composer__voice-time" id="chatVoiceRecordTime"
+                >0:00</span
+              >
+              <button
+                type="button"
+                class="link-btn"
+                id="chatVoiceCancelBtn"
+                data-i18n="chat.voice.cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="btn btn--primary btn--small"
+                id="chatVoiceStopBtn"
+                data-i18n="chat.voice.stop"
+              >
+                Stop
+              </button>
             </div>
             <button
               type="submit"
@@ -1002,18 +1212,111 @@
 
     <!-- ============ CONFIRM MODAL (reused for remove/block/unblock) ============ -->
     <div class="modal-backdrop" id="confirmModalBackdrop" hidden>
-      <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <div
+        class="modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirmModalTitle"
+      >
         <h3 class="modal__title" id="confirmModalTitle"></h3>
         <p class="modal__body" id="confirmModalBody"></p>
         <div class="modal__actions">
-          <button type="button" class="btn btn--ghost" id="confirmModalCancel"></button>
-          <button type="button" class="btn btn--danger" id="confirmModalConfirm"></button>
+          <button
+            type="button"
+            class="btn btn--ghost"
+            id="confirmModalCancel"
+          ></button>
+          <button
+            type="button"
+            class="btn btn--danger"
+            id="confirmModalConfirm"
+          ></button>
         </div>
       </div>
     </div>
 
+    <!-- ============ DELETE ACCOUNT MODAL (reuses the modal-backdrop shell) ============ -->
+    <div class="modal-backdrop" id="deleteAccountModalBackdrop" hidden>
+      <form
+        class="modal"
+        id="deleteAccountForm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="deleteAccountModalTitle"
+      >
+        <h3
+          class="modal__title"
+          id="deleteAccountModalTitle"
+          data-i18n="settings.deleteAccount.modalTitle"
+        >
+          Delete your account?
+        </h3>
+        <p
+          class="modal__warning"
+          data-i18n="settings.deleteAccount.modalWarning"
+        >
+          This permanently deletes your account, profile, messages, and files.
+          This can't be undone.
+        </p>
+
+        <label class="field">
+          <span
+            class="field__label"
+            data-i18n="settings.deleteAccount.passwordLabel"
+            >Enter your password to confirm</span
+          >
+          <div class="field__control">
+            <input
+              type="password"
+              id="deleteAccountPassword"
+              autocomplete="current-password"
+              data-i18n-placeholder="common.passwordPlaceholder"
+              placeholder="••••••••"
+            />
+            <button
+              type="button"
+              class="field__toggle"
+              data-toggle-for="deleteAccountPassword"
+              data-i18n="common.show"
+            >
+              Show
+            </button>
+          </div>
+          <span class="field__error" id="err-deleteAccountPassword"></span>
+        </label>
+
+        <span
+          class="field__error field__error--form"
+          id="err-deleteAccountForm"
+        ></span>
+
+        <div class="modal__actions">
+          <button
+            type="button"
+            class="btn btn--ghost"
+            id="deleteAccountCancel"
+            data-i18n="common.cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="btn btn--danger"
+            id="deleteAccountConfirm"
+            data-i18n="settings.deleteAccount.confirmButton"
+          >
+            Delete my account
+          </button>
+        </div>
+      </form>
+    </div>
+
     <!-- ============ IMAGE LIGHTBOX (reuses the modal-backdrop shell) ============ -->
-    <div class="modal-backdrop modal-backdrop--lightbox" id="imageLightboxBackdrop" hidden>
+    <div
+      class="modal-backdrop modal-backdrop--lightbox"
+      id="imageLightboxBackdrop"
+      hidden
+    >
       <div class="image-lightbox">
         <button
           type="button"
@@ -1024,7 +1327,13 @@
           aria-label="Close"
         >
           <svg viewBox="0 0 24 24" width="20" height="20">
-            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <path
+              d="M6 6l12 12M18 6L6 18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
         <img class="image-lightbox__img" id="imageLightboxImg" alt="" />
